@@ -1,0 +1,57 @@
+# Client Compatibility
+
+The server must not depend on one agent vendor.
+
+## Required Clients
+
+Each release candidate is exercised through:
+
+- the official MCP Inspector;
+- one stdio desktop or CLI client;
+- one Streamable HTTP client;
+- a protocol-level integration test independent of a specific LLM.
+
+Codex, Claude, and other MCP-compatible agents are consumers, not compile-time
+dependencies.
+
+| Surface | M0 | Release gate |
+| --- | --- | --- |
+| MCP Inspector | not tested | initialization, discovery, every enabled tool |
+| stdio client | not tested | two independent client implementations |
+| Streamable HTTP client | not implemented | two authenticated concurrent clients |
+
+## Compatibility Rules
+
+- Use standard MCP initialization and tool discovery.
+- Support stdio and Streamable HTTP; do not add a custom transport.
+- Keep tools deterministic without relying on client-specific prompt behavior.
+- Do not require a client to send credentials as tool arguments.
+- Return structured errors and stable schema versions.
+- Publish a compatibility matrix for every tagged release.
+
+## Remote Deployment
+
+Remote compatibility is not considered complete until OAuth discovery,
+authorization failures, token audience checks, Origin validation, reconnects,
+timeouts, and concurrent clients are tested. Negative coverage also includes
+replay attempts, scope escalation, malformed authorization metadata, provider
+timeout isolation, cross-client state isolation, and credential non-sharing.
+
+For a canonical endpoint such as `https://mcp.example.test/mcp`, the server
+publishes protected-resource metadata at the RFC 9728 well-known location
+derived from that resource. A request without credentials receives a response
+equivalent to:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp", scope="observability:capabilities"
+```
+
+A valid token lacking `observability:alerts:read` receives HTTP 403 with a
+Bearer challenge containing `error="insufficient_scope"`,
+`scope="observability:alerts:read"`, and the same `resource_metadata` URL.
+Tests assert the exact resource identifier, metadata URL, authorization-server
+relationship, audience/resource validation, and challenge headers. Example
+hostnames are documentation placeholders and are never runtime defaults.
+
+Each tagged release publishes the exact client versions and pass/fail status.
