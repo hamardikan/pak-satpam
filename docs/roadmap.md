@@ -31,6 +31,7 @@ Visible product: MCP Inspector can discover and call deterministic fake tools.
 - bounded metric queries.
 - health and alert normalization.
 - pre-output redaction.
+- allowlisted Grafana panel and dashboard rendering as MCP image content.
 
 The integration stack pins Grafana and VictoriaMetrics image versions in a
 test-only Compose file. CI must start it, wait on health endpoints, load
@@ -59,7 +60,8 @@ server without sharing credentials or state.
 - compact incident evidence bundles;
 - named query templates;
 - freshness and truncation semantics;
-- dashboard references without full dashboard payloads.
+- dashboard references without full dashboard payloads;
+- opt-in panel and dashboard visuals with structured fallback.
 
 Visible product: an agent explains a synthetic incident using bounded evidence
 without receiving secrets or raw backend payloads.

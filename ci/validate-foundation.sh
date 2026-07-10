@@ -13,6 +13,7 @@ required=(
   docs/test-strategy.md
   docs/roadmap.md
   docs/decisions/0001-product-boundary.md
+  docs/decisions/0002-grafana-visual-context.md
 )
 
 for path in "${required[@]}"; do
@@ -25,6 +26,10 @@ grep -q "Streamable HTTP" docs/client-compatibility.md
 grep -q "WWW-Authenticate" docs/security-model.md
 grep -q "DNS rebinding" docs/test-strategy.md
 grep -q "machine-readable JSON schemas" docs/tool-surface.md
+grep -q "observability.render_panel" docs/tool-surface.md
+grep -q "observability.render_dashboard" docs/tool-surface.md
+grep -q "ImageContent" docs/tool-surface.md
+grep -q "agentSafe: true" docs/tool-surface.md
 
 for pattern in \
   '[a-z0-9.-]+\.ts\.net' \

@@ -19,6 +19,7 @@ dependencies.
 | MCP Inspector | not tested | initialization, discovery, every enabled tool |
 | stdio client | not tested | two independent client implementations |
 | Streamable HTTP client | not implemented | two authenticated concurrent clients |
+| MCP image content | contract only | panel and dashboard PNG displayed by two clients |
 
 ## Compatibility Rules
 
@@ -28,6 +29,8 @@ dependencies.
 - Do not require a client to send credentials as tool arguments.
 - Return structured errors and stable schema versions.
 - Publish a compatibility matrix for every tagged release.
+- Preserve structured metadata when a client cannot display image content; an
+  undisplayed image must not be interpreted as healthy or empty evidence.
 
 ## Remote Deployment
 

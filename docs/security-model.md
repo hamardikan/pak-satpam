@@ -27,6 +27,7 @@ every client.
   policy.
 - Origin validation for Streamable HTTP.
 - Rate limits and concurrent-query limits for remote deployment.
+- Separate render timeout, pixel, byte, and concurrency limits.
 
 Every control fails closed. Validation, authorization, origin, provider,
 deadline, output-limit, or redaction failures return a structured MCP error and
@@ -96,12 +97,27 @@ Prometheus-compatible providers, or another MCP server. Provider credentials
 are separate operator-configured runtime inputs with their own audience and
 least-privilege policy.
 
+### Visual Evidence
+
+Rendered pixels can disclose labels, annotations, variables, usernames, or
+topology that text redaction cannot reliably remove. Only operator-reviewed
+dashboards marked `agentSafe: true`, allowlisted panels and variables, and a
+dedicated read-only Grafana identity may be rendered. OCR is not a security
+boundary.
+
+The MCP calls configured Grafana render endpoints and never exposes the image
+renderer directly. Caller-supplied URLs, browser flags, external navigation,
+downloads, file URLs, and redirects are denied. Renderer authentication is
+separate, renderer egress is limited to the configured Grafana callback, and
+PNG bytes are not logged or persisted by default.
+
 ## Version 1 Scopes
 
 - `observability:capabilities`
 - `observability:health:read`
 - `observability:alerts:read`
 - `observability:metrics:query`
+- `observability:visuals:render`
 - `observability:incident:read`
 
 There are no write scopes in version 1.
@@ -115,3 +131,4 @@ There are no write scopes in version 1.
 - Dashboard mutation.
 - Service restart or deployment tools.
 - Persisting unredacted provider payloads.
+- Generic screenshot, browser automation, or arbitrary render tools.

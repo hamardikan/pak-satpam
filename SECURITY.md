@@ -20,5 +20,5 @@ coordinate disclosure after a fix or mitigation exists.
 
 The first release is read-only. Reports that demonstrate credential exposure,
 SSRF, authorization bypass, unbounded queries, prompt-injection execution,
-cross-client data exposure, or mutation capability are treated as security
-issues.
+cross-client data exposure, rendered-image disclosure, renderer sandbox escape,
+or mutation capability are treated as security issues.

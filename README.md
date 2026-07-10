@@ -42,6 +42,8 @@ structured evidence.
 | `observability.health_snapshot` | Return bounded service and target health. |
 | `observability.active_alerts` | Return normalized active alert metadata. |
 | `observability.query_metrics` | Run a bounded instant or range metrics query. |
+| `observability.render_panel` | Return one allowlisted Grafana panel as PNG evidence. |
+| `observability.render_dashboard` | Return one allowlisted Grafana dashboard as PNG evidence. |
 | `observability.incident_context` | Build a compact evidence bundle for one alert or service. |
 
 Version 1 is read-only. It will not create dashboards, modify alert rules,
@@ -89,6 +91,11 @@ The unique scope here is:
 - provider-neutral schemas;
 - predictable limits and redaction for agent use.
 
+Grafana visuals are first-class evidence. Rendering tools return an MCP
+`ImageContent` PNG plus structured metadata for the source, observation window,
+dimensions, byte size, freshness, truncation, and warnings. Visuals are opt-in;
+normal metric queries do not spend rendering resources or image context.
+
 There is no automatic delegation between the two servers. Use Grafana MCP when
 an agent needs Grafana-native dashboards, incidents, administration, or its
 existing query tools. Use this project's namespace when the client needs the
@@ -106,6 +113,7 @@ offer both namespaces, but each request has one explicit owner.
 - [Client Compatibility](docs/client-compatibility.md)
 - [Test Strategy](docs/test-strategy.md)
 - [Roadmap](docs/roadmap.md)
+- [Grafana Visual Context ADR](docs/decisions/0002-grafana-visual-context.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License

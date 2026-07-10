@@ -18,6 +18,10 @@ synthetic metrics and alerts. Tests prove startup health, normal queries,
 timeouts, malformed responses, large result truncation, and teardown including
 volumes. No external credentials or production data are used.
 
+The disposable stack also exercises a pinned Grafana Image Renderer. Synthetic
+dashboards verify nonblank PNG output, dimensions, time ranges, size limits,
+safe variables, renderer failure, and teardown without production data.
+
 ## Transport Compatibility
 
 - MCP Inspector initialization, discovery, and tool calls.
@@ -44,6 +48,10 @@ volumes. No external credentials or production data are used.
 - Cross-client state and credential leakage.
 - Query timeout, range, series, output, concurrency, and rate-limit overflow.
 - Provider payload persistence and normal-log leakage.
+- Arbitrary render URLs, variables, external navigation, file URLs, unsupported
+  panels, redirects, oversized or blank images, and render concurrency limits.
+- Secret sentinels in rendered pixels or image bytes persisted to logs, evidence
+  files, or cross-principal caches.
 
 ## Live Shadow
 
