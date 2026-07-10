@@ -14,12 +14,12 @@ Each release candidate is exercised through:
 Codex, Claude, and other MCP-compatible agents are consumers, not compile-time
 dependencies.
 
-| Surface | M0 | Release gate |
+| Surface | Current implementation | Public release gate |
 | --- | --- | --- |
-| MCP Inspector | not tested | initialization, discovery, every enabled tool |
-| stdio client | not tested | two independent client implementations |
-| Streamable HTTP client | not implemented | two authenticated concurrent clients |
-| MCP image content | contract only | panel and dashboard PNG displayed by two clients |
+| MCP Inspector | initialization and seven-tool discovery tested | every enabled tool |
+| stdio client | SDK and process smoke tested | two independent client implementations |
+| Streamable HTTP client | static-Bearer private transport tested | OAuth plus two authenticated concurrent clients |
+| MCP image content | synthetic PNG and provider fallback tested | panel and dashboard PNG displayed by two clients |
 
 ## Compatibility Rules
 
@@ -34,7 +34,7 @@ dependencies.
 
 ## Remote Deployment
 
-Remote compatibility is not considered complete until OAuth discovery,
+Public remote compatibility is not considered complete until OAuth discovery,
 authorization failures, token audience checks, Origin validation, reconnects,
 timeouts, and concurrent clients are tested. Negative coverage also includes
 replay attempts, scope escalation, malformed authorization metadata, provider
@@ -58,3 +58,9 @@ relationship, audience/resource validation, and challenge headers. Example
 hostnames are documentation placeholders and are never runtime defaults.
 
 Each tagged release publishes the exact client versions and pass/fail status.
+
+The current private HTTP mode intentionally precedes that public gate. It uses
+one file-injected Bearer credential, exact allowed Host values, stateless SDK
+transport instances, and no public ingress. A 401 response contains only a
+generic `WWW-Authenticate: Bearer` challenge. It must not be exposed as the
+OAuth-complete public endpoint described above.

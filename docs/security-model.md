@@ -67,6 +67,14 @@ written to logs, or returned through capability discovery.
 
 ### Streamable HTTP
 
+The current private-shadow transport is a narrower pre-release mode: one
+file-injected Bearer credential, exact allowed Host values, stateless server
+instances, and private-network ingress only. It does not claim OAuth discovery,
+audience-bound scopes, public Origin policy, or multi-tenant isolation. It must
+not be exposed publicly.
+
+The public remote release target is described below.
+
 Remote deployments target MCP specification `2025-11-25`. They must expose
 OAuth Protected Resource Metadata at the applicable well-known URI and identify
 the authorization server. Access tokens must be sent only in the Authorization

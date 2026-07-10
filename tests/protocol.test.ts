@@ -194,4 +194,21 @@ describe("observability MCP protocol", () => {
       }),
     ).resolves.toMatchObject({ isError: true });
   });
+
+  it("rejects visual identifiers outside the configured allowlist", async () => {
+    const result = await client.callTool({
+      name: "observability.render_panel",
+      arguments: {
+        dashboardId: "unknown-dashboard",
+        panelId: "unknown-panel",
+        from: "2026-07-09T23:00:00.000Z",
+        to: FIXED_NOW.toISOString(),
+        width: 800,
+        height: 450,
+      },
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(JSON.stringify(result)).toContain("resource_not_allowed");
+  });
 });

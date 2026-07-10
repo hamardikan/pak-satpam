@@ -5,10 +5,12 @@ data into bounded evidence that AI agents can inspect safely.
 
 ## Status
 
-Runnable local foundation. The TypeScript MCP server exposes the complete
-read-only tool contract over stdio using deterministic fake data and synthetic
-PNG visuals. Production Grafana and Prometheus-compatible adapters are not
-connected yet.
+Runnable provider-backed MCP. The TypeScript server exposes seven bounded,
+read-only tools over stdio and authenticated Streamable HTTP. It includes
+VictoriaMetrics/Prometheus-compatible metrics and alert adapters, allowlisted
+Grafana PNG rendering, deterministic local fixtures, npm packaging, and a
+non-root OCI runtime. Private deployment configuration remains outside this
+public repository.
 
 ## Product Boundary
 
@@ -26,9 +28,10 @@ Observability Agent MCP
   - label and value redaction
   - normalized evidence bundles
   |
-  +--> deterministic fake provider (implemented)
-  +--> Grafana API (planned)
-  +--> Prometheus-compatible API (planned)
+  +--> deterministic fake provider
+  +--> allowlisted Grafana render API
+  +--> named-query Prometheus-compatible API
+       +--> VictoriaMetrics alert API
        - Prometheus
        - VictoriaMetrics
 ```
@@ -53,14 +56,16 @@ silence alerts, restart services, run scripts, or trigger deployments.
 
 ## Portability
 
-The current foundation can be consumed through:
+The server can be consumed through:
 
 - stdio for local desktop and CLI agents;
-- a locally built OCI image;
+- an authenticated Streamable HTTP endpoint on a private network;
+- a non-root OCI image;
 - the package CLI produced by `npm pack`.
 
-Authenticated Streamable HTTP is planned, not implemented. No package or image
-has been published yet.
+The implemented HTTP mode uses a file-injected Bearer credential and a strict
+Host allowlist for a private, single-operator deployment. It is not a public or
+multi-tenant OAuth deployment. No package or image has been published yet.
 
 Remote HTTP deployment requires authentication. Publishing this repository does
 not imply that an MCP endpoint should be exposed without OAuth, network policy,
@@ -99,6 +104,10 @@ Build and run the non-root OCI image over stdio with:
 npm run container:build
 docker run --rm -i observability-agent-mcp:local
 ```
+
+Production HTTP mode requires a strict YAML provider policy and two `0600`
+runtime credential files. See [Client Compatibility](docs/client-compatibility.md)
+and [Security Model](docs/security-model.md) before deploying it.
 
 ## Relationship To Grafana MCP
 

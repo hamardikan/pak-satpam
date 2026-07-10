@@ -29,7 +29,10 @@ export interface SyntheticRenderInput {
   readonly width: number;
   readonly height: number;
   readonly maxBytes: number;
+  readonly theme?: SyntheticTheme;
 }
+
+export type SyntheticTheme = "light" | "dark";
 
 export interface SyntheticPanelInput extends SyntheticRenderInput {
   readonly values?: readonly number[];
@@ -55,6 +58,31 @@ interface RgbColor {
   readonly blue: number;
 }
 
+interface ThemePalette {
+  readonly background: RgbColor;
+  readonly panel: RgbColor;
+  readonly border: RgbColor;
+  readonly grid: RgbColor;
+  readonly axis: RgbColor;
+}
+
+const THEMES: Readonly<Record<SyntheticTheme, ThemePalette>> = {
+  dark: {
+    background: { red: 16, green: 24, blue: 40 },
+    panel: { red: 25, green: 36, blue: 57 },
+    border: { red: 57, green: 78, blue: 108 },
+    grid: { red: 49, green: 68, blue: 94 },
+    axis: { red: 76, green: 97, blue: 126 },
+  },
+  light: {
+    background: { red: 244, green: 247, blue: 250 },
+    panel: { red: 255, green: 255, blue: 255 },
+    border: { red: 176, green: 187, blue: 202 },
+    grid: { red: 218, green: 225, blue: 233 },
+    axis: { red: 128, green: 143, blue: 162 },
+  },
+};
+
 const PANEL_COLORS: readonly RgbColor[] = [
   { red: 28, green: 199, blue: 185 },
   { red: 89, green: 157, blue: 246 },
@@ -71,8 +99,18 @@ export function renderSyntheticPanel(input: SyntheticPanelInput): SyntheticRende
   const startedAt = performance.now();
   validateRenderInput(input);
 
-  const image = createCanvas(input.width, input.height);
-  drawPanel(image, 0, 0, input.width, input.height, input.values ?? DEFAULT_VALUES, PANEL_COLORS[0]!);
+  const palette = THEMES[input.theme ?? "dark"];
+  const image = createCanvas(input.width, input.height, palette);
+  drawPanel(
+    image,
+    0,
+    0,
+    input.width,
+    input.height,
+    input.values ?? DEFAULT_VALUES,
+    PANEL_COLORS[0]!,
+    palette,
+  );
 
   return encodeResult(image, input.maxBytes, startedAt);
 }
@@ -91,7 +129,8 @@ export function renderSyntheticDashboard(
     );
   }
 
-  const image = createCanvas(input.width, input.height);
+  const palette = THEMES[input.theme ?? "dark"];
+  const image = createCanvas(input.width, input.height, palette);
   const columns = Math.ceil(Math.sqrt(panelCount));
   const rows = Math.ceil(panelCount / columns);
   const gap = Math.max(2, Math.floor(Math.min(input.width, input.height) / 48));
@@ -111,6 +150,7 @@ export function renderSyntheticDashboard(
       panelHeight,
       shiftedValues(index),
       PANEL_COLORS[index % PANEL_COLORS.length]!,
+      palette,
     );
   }
 
@@ -142,9 +182,9 @@ function validateRenderInput(input: SyntheticRenderInput): void {
   }
 }
 
-function createCanvas(width: number, height: number): PNG {
+function createCanvas(width: number, height: number, palette: ThemePalette): PNG {
   const image = new PNG({ width, height });
-  fill(image, 16, 24, 40);
+  fill(image, palette.background.red, palette.background.green, palette.background.blue);
   return image;
 }
 
@@ -156,11 +196,12 @@ function drawPanel(
   height: number,
   values: readonly number[],
   color: RgbColor,
+  palette: ThemePalette,
 ): void {
   const right = x + width - 1;
   const bottom = y + height - 1;
-  fillRect(image, x, y, width, height, 25, 36, 57);
-  strokeRect(image, x, y, width, height, 57, 78, 108);
+  fillRect(image, x, y, width, height, palette.panel.red, palette.panel.green, palette.panel.blue);
+  strokeRect(image, x, y, width, height, palette.border.red, palette.border.green, palette.border.blue);
 
   const inset = Math.max(3, Math.floor(Math.min(width, height) / 10));
   const graphLeft = x + inset;
@@ -170,9 +211,9 @@ function drawPanel(
 
   for (let line = 1; line < 4; line += 1) {
     const gridY = graphTop + Math.floor(((graphBottom - graphTop) * line) / 4);
-    drawLine(image, graphLeft, gridY, graphRight, gridY, 49, 68, 94);
+    drawLine(image, graphLeft, gridY, graphRight, gridY, palette.grid.red, palette.grid.green, palette.grid.blue);
   }
-  drawLine(image, graphLeft, graphBottom, graphRight, graphBottom, 76, 97, 126);
+  drawLine(image, graphLeft, graphBottom, graphRight, graphBottom, palette.axis.red, palette.axis.green, palette.axis.blue);
 
   const normalized = normalizeValues(values);
   const spanX = Math.max(1, graphRight - graphLeft);

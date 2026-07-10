@@ -4,9 +4,11 @@ import {
   ActiveAlertsResultSchema,
   CapabilitiesInputSchema,
   HealthSnapshotInputSchema,
+  IncidentContextResultSchema,
   IncidentContextInputSchema,
   LogicalIdSchema,
   QueryMetricsInputSchema,
+  QueryMetricsResultSchema,
   RenderDashboardInputSchema,
   RenderPanelInputSchema,
 } from "../src/domain/tool-schemas.js";
@@ -69,6 +71,53 @@ describe("domain tool schemas", () => {
               annotations: { runbookRef: "https://untrusted.invalid/runbook" },
             },
           ],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("enforces metric result and incident subject semantics", () => {
+    const envelope = {
+      schemaVersion: "1.0",
+      observedAt: FIXED_NOW.toISOString(),
+      providerClass: "fake",
+      freshness: "fresh",
+      truncated: false,
+      redactionsApplied: false,
+      warnings: [],
+    } as const;
+
+    expect(
+      QueryMetricsResultSchema.safeParse({
+        ...envelope,
+        data: {
+          queryTemplate: "request-rate",
+          queryKind: "range",
+          series: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      QueryMetricsResultSchema.safeParse({
+        ...envelope,
+        data: {
+          queryTemplate: "request-rate",
+          queryKind: "instant",
+          ...RANGE,
+          stepMs: 60_000,
+          series: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      IncidentContextResultSchema.safeParse({
+        ...envelope,
+        data: {
+          subject: {},
+          health: [],
+          alerts: [],
+          dashboardRefs: [],
+          visuals: { requested: "none", available: false },
         },
       }).success,
     ).toBe(false);

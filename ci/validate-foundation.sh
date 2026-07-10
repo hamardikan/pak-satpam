@@ -23,20 +23,29 @@ required=(
   src/cli.ts
   src/server/create-server.ts
   src/domain/tool-schemas.ts
+  src/domain/visual-policy.ts
+  src/http/create-http-app.ts
+  src/http-cli.ts
   src/providers/fake-provider.ts
+  src/providers/grafana-visual-provider.ts
+  src/providers/victoriametrics-provider.ts
+  src/runtime/load-runtime-configuration.ts
   src/visuals/synthetic-renderer.ts
+  scripts/container-smoke.sh
+  scripts/http-smoke.mjs
+  scripts/package-smoke.mjs
 )
 
 for path in "${required[@]}"; do
   test -f "$path" || { echo "missing=$path" >&2; exit 1; }
 done
 
-grep -q "Runnable local foundation" README.md
+grep -q "Runnable provider-backed MCP" README.md
 grep -q "Version 1 is read-only" docs/security-model.md
 grep -q "Streamable HTTP" docs/client-compatibility.md
 grep -q "WWW-Authenticate" docs/security-model.md
 grep -q "DNS rebinding" docs/test-strategy.md
-grep -q "machine-readable JSON schemas" docs/tool-surface.md
+grep -q "machine-readable Zod schemas" docs/tool-surface.md
 grep -q "observability.render_panel" docs/tool-surface.md
 grep -q "observability.render_dashboard" docs/tool-surface.md
 grep -q "ImageContent" docs/tool-surface.md

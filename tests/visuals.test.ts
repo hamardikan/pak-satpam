@@ -74,4 +74,13 @@ describe("synthetic visual rendering", () => {
       SyntheticRenderError,
     );
   });
+
+  it("renders distinct deterministic light and dark themes", () => {
+    const common = { width: 320, height: 180, maxBytes: 200_000 };
+    const dark = renderSyntheticPanel({ ...common, theme: "dark" } as never);
+    const light = renderSyntheticPanel({ ...common, theme: "light" } as never);
+
+    expect(dark.data).not.toBe(light.data);
+    expect(renderSyntheticPanel({ ...common, theme: "light" } as never).data).toBe(light.data);
+  });
 });

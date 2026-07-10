@@ -9,6 +9,8 @@ import type {
   IncidentContextResult,
   QueryMetricsInput,
   QueryMetricsResult,
+  RenderDashboardInput,
+  RenderPanelInput,
 } from "../domain/tool-schemas.js";
 
 export interface ObservabilityProvider {
@@ -20,3 +22,18 @@ export interface ObservabilityProvider {
 }
 
 export type Clock = () => Date;
+
+/** Bounded PNG evidence suitable for a server transport layer. */
+export interface VisualRenderResult {
+  readonly mimeType: "image/png";
+  readonly data: Uint8Array;
+  readonly rawByteSize: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Optional production visual capability, kept separate from core metric evidence. */
+export interface ObservabilityVisualProvider {
+  renderPanel(input: RenderPanelInput): Promise<VisualRenderResult>;
+  renderDashboard(input: RenderDashboardInput): Promise<VisualRenderResult>;
+}

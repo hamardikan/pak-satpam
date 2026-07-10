@@ -1,8 +1,8 @@
 # Tool Surface
 
-These are proposed version 1 tool names and result shapes. They become stable
-public contracts only when M1 adds versioned machine-readable JSON schemas and
-contract tests. Provider-specific details remain behind adapters.
+These are the implemented version 1 tool names and result shapes. Versioned
+machine-readable Zod schemas and contract tests enforce them. Provider-specific
+details remain behind adapters.
 
 ## Common Evidence Envelope
 
@@ -24,7 +24,7 @@ Visual tools additionally return one MCP `ImageContent` block containing
 base64 PNG data. Structured metadata is returned separately; image bytes never
 appear in `structuredContent`, logs, or errors.
 
-M1 schemas define field types, enums, units, maximum lengths, and the common
+Schemas define field types, enums, units, maximum lengths, and the common
 error envelope. The initial `schemaVersion` is `1.0`; incompatible changes
 require a new major schema version. Dates use RFC 3339 UTC strings, durations
 use integer milliseconds, and sizes use integer bytes.

@@ -17,4 +17,5 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 
 USER node
-ENTRYPOINT ["node", "dist/cli.js"]
+ENTRYPOINT ["node"]
+CMD ["dist/cli.js"]

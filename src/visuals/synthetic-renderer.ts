@@ -10,4 +10,5 @@ export type {
   SyntheticRenderErrorCode,
   SyntheticRenderInput,
   SyntheticRenderResult,
+  SyntheticTheme,
 } from "./synthetic.js";

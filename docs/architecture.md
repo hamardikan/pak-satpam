@@ -74,8 +74,7 @@ Those concerns belong to the client agent or deployment environment.
 
 ## Technology Direction
 
-The first implementation targets TypeScript on Node.js 22 using the official
-MCP SDK. M1 must pin the SDK and runtime versions in the package lock and CI
-matrix before code is accepted. The server must remain transport-neutral and
-package as both an npm CLI and an OCI image. A language change requires an ADR
-and equivalent compatibility tests.
+The implementation uses TypeScript on Node.js 22 and the pinned official MCP
+SDK. It packages as an npm CLI and non-root OCI image, with stdio and stateless
+Streamable HTTP entry points sharing the same tool application. A language
+change requires an ADR and equivalent compatibility tests.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -21,7 +22,17 @@ import {
   type RenderDashboardInput,
   type RenderPanelInput,
 } from "../domain/tool-schemas.js";
-import type { Clock, ObservabilityProvider } from "../providers/observability-provider.js";
+import type {
+  Clock,
+  ObservabilityProvider,
+  ObservabilityVisualProvider,
+} from "../providers/observability-provider.js";
+import {
+  allowsDashboard,
+  allowsPanel,
+  DEFAULT_SYNTHETIC_VISUAL_ALLOWLIST,
+  type VisualAllowlist,
+} from "../domain/visual-policy.js";
 import {
   renderSyntheticDashboard,
   renderSyntheticPanel,
@@ -42,12 +53,15 @@ const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
 export interface CreateObservabilityServerOptions {
   readonly provider: ObservabilityProvider;
   readonly clock?: Clock;
+  readonly visualAllowlist?: VisualAllowlist;
+  readonly visualProvider?: ObservabilityVisualProvider;
 }
 
 export function createObservabilityServer(
   options: CreateObservabilityServerOptions,
 ): McpServer {
   const clock = options.clock ?? (() => new Date());
+  const visualAllowlist = options.visualAllowlist ?? DEFAULT_SYNTHETIC_VISUAL_ALLOWLIST;
   const server = new McpServer(
     { name: "observability-agent-mcp", version: "0.1.0" },
     {
@@ -119,23 +133,25 @@ export function createObservabilityServer(
   server.registerTool(
     "observability.render_panel",
     {
-      description: "Render one allowlisted logical panel as synthetic PNG evidence.",
+      description: "Render one allowlisted logical panel as bounded PNG evidence.",
       inputSchema: RenderPanelInputSchema,
       outputSchema: RenderPanelResultSchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async (input) => renderPanelResult(input, clock),
+    async (input) =>
+      renderPanelResult(input, clock, visualAllowlist, options.visualProvider),
   );
 
   server.registerTool(
     "observability.render_dashboard",
     {
-      description: "Render one allowlisted agent-safe dashboard as synthetic PNG evidence.",
+      description: "Render one allowlisted agent-safe dashboard as bounded PNG evidence.",
       inputSchema: RenderDashboardInputSchema,
       outputSchema: RenderDashboardResultSchema,
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async (input) => renderDashboardResult(input, clock),
+    async (input) =>
+      renderDashboardResult(input, clock, visualAllowlist, options.visualProvider),
   );
 
   server.registerTool(
@@ -170,29 +186,65 @@ async function safeProviderResult(
   }
 }
 
-function renderPanelResult(input: RenderPanelInput, clock: Clock): CallToolResult {
+async function renderPanelResult(
+  input: RenderPanelInput,
+  clock: Clock,
+  visualAllowlist: VisualAllowlist,
+  visualProvider?: ObservabilityVisualProvider,
+): Promise<CallToolResult> {
+  if (!allowsPanel(visualAllowlist, input)) {
+    return resourceNotAllowed();
+  }
+  if (visualProvider !== undefined) {
+    try {
+      const image = encodeProviderVisual(await visualProvider.renderPanel(input));
+      if (image.byteSize > PANEL_MAX_BYTES) return visualUnavailable(input, clock, input.panelId);
+      return imageResult(visualEvidence(input, image, clock, "grafana", input.panelId), image);
+    } catch {
+      return visualUnavailable(input, clock, input.panelId);
+    }
+  }
   try {
     const image = renderSyntheticPanel({
       width: input.width,
       height: input.height,
       maxBytes: PANEL_MAX_BYTES,
+      theme: input.theme,
     });
-    const structured = visualEvidence(input, image, clock, input.panelId);
+    const structured = visualEvidence(input, image, clock, "fake", input.panelId);
     return imageResult(structured, image);
   } catch (error) {
     return renderError(error);
   }
 }
 
-function renderDashboardResult(input: RenderDashboardInput, clock: Clock): CallToolResult {
+async function renderDashboardResult(
+  input: RenderDashboardInput,
+  clock: Clock,
+  visualAllowlist: VisualAllowlist,
+  visualProvider?: ObservabilityVisualProvider,
+): Promise<CallToolResult> {
+  if (!allowsDashboard(visualAllowlist, input)) {
+    return resourceNotAllowed();
+  }
+  if (visualProvider !== undefined) {
+    try {
+      const image = encodeProviderVisual(await visualProvider.renderDashboard(input));
+      if (image.byteSize > DASHBOARD_MAX_BYTES) return visualUnavailable(input, clock);
+      return imageResult(visualEvidence(input, image, clock, "grafana"), image);
+    } catch {
+      return visualUnavailable(input, clock);
+    }
+  }
   try {
     const image = renderSyntheticDashboard({
       width: input.width,
       height: input.height,
       maxBytes: DASHBOARD_MAX_BYTES,
       panelCount: 4,
+      theme: input.theme,
     });
-    const structured = visualEvidence(input, image, clock);
+    const structured = visualEvidence(input, image, clock, "fake");
     return imageResult(structured, image);
   } catch (error) {
     return renderError(error);
@@ -243,12 +295,13 @@ function visualEvidence(
   input: RenderPanelInput | RenderDashboardInput,
   image: SyntheticRenderResult,
   clock: Clock,
+  providerClass: "fake" | "grafana",
   panelId?: string,
 ): Record<string, unknown> {
   return {
     schemaVersion: SCHEMA_VERSION,
     observedAt: clock().toISOString(),
-    providerClass: "fake",
+    providerClass,
     freshness: "fresh",
     truncated: false,
     redactionsApplied: false,
@@ -256,6 +309,7 @@ function visualEvidence(
     data: {
       dashboardId: input.dashboardId,
       ...(panelId === undefined ? {} : { panelId }),
+      available: true,
       requestedRange: { from: input.from, to: input.to },
       effectiveRange: { from: input.from, to: input.to },
       width: image.width,
@@ -265,6 +319,58 @@ function visualEvidence(
       renderDurationMs: Math.round(image.renderDurationMs),
     },
   };
+}
+
+function encodeProviderVisual(
+  result: Awaited<ReturnType<ObservabilityVisualProvider["renderPanel"]>>,
+): SyntheticRenderResult {
+  if (
+    result.mimeType !== "image/png" ||
+    result.data.byteLength === 0 ||
+    result.rawByteSize !== result.data.byteLength ||
+    result.width < 1 ||
+    result.height < 1
+  ) {
+    throw new Error("invalid visual provider result");
+  }
+  const bytes = Buffer.from(result.data);
+  return {
+    mimeType: "image/png",
+    data: bytes.toString("base64"),
+    width: result.width,
+    height: result.height,
+    byteSize: bytes.byteLength,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    renderDurationMs: 0,
+  };
+}
+
+function visualUnavailable(
+  input: RenderPanelInput | RenderDashboardInput,
+  clock: Clock,
+  panelId?: string,
+): CallToolResult {
+  const structured = {
+    schemaVersion: SCHEMA_VERSION,
+    observedAt: clock().toISOString(),
+    providerClass: "grafana" as const,
+    freshness: "unknown" as const,
+    truncated: false,
+    redactionsApplied: false,
+    warnings: [
+      { code: "visual-unavailable", message: "Visual evidence is unavailable" },
+    ],
+    data: {
+      dashboardId: input.dashboardId,
+      ...(panelId === undefined ? {} : { panelId }),
+      available: false as const,
+      requestedRange: { from: input.from, to: input.to },
+      width: input.width,
+      height: input.height,
+    },
+  };
+  const schema = panelId === undefined ? RenderDashboardResultSchema : RenderPanelResultSchema;
+  return structuredResult(schema.parse(structured));
 }
 
 function incidentWithVisual(
@@ -308,5 +414,12 @@ function providerError(): CallToolResult {
   return {
     isError: true,
     content: [{ type: "text", text: JSON.stringify({ error: "provider_unavailable" }) }],
+  };
+}
+
+function resourceNotAllowed(): CallToolResult {
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify({ error: "resource_not_allowed" }) }],
   };
 }

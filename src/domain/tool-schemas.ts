@@ -211,16 +211,23 @@ const MetricSeriesSchema = z
   })
   .strict();
 
-const MetricDataSchema = z
-  .object({
+const MetricDataFields = {
     queryTemplate: LogicalIdSchema,
-    queryKind: z.enum(["instant", "range"]),
-    from: UtcTimestampSchema.optional(),
-    to: UtcTimestampSchema.optional(),
-    stepMs: z.number().int().min(1_000).max(3_600_000).optional(),
     series: z.array(MetricSeriesSchema).max(MAX_SERIES),
-  })
-  .strict();
+} as const;
+
+const MetricDataSchema = z.discriminatedUnion("queryKind", [
+  z.object({ ...MetricDataFields, queryKind: z.literal("instant") }).strict(),
+  z
+    .object({
+      ...MetricDataFields,
+      queryKind: z.literal("range"),
+      from: UtcTimestampSchema,
+      to: UtcTimestampSchema,
+      stepMs: z.number().int().min(1_000).max(3_600_000),
+    })
+    .strict(),
+]);
 
 const DashboardReferenceSchema = z
   .object({
@@ -236,7 +243,11 @@ const IncidentDataSchema = z
         alertId: LogicalIdSchema.optional(),
         serviceId: LogicalIdSchema.optional(),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (subject) => subject.alertId !== undefined || subject.serviceId !== undefined,
+        "incident subjects require an alertId or serviceId",
+      ),
     health: z.array(HealthTargetSchema).max(MAX_SERVICES),
     alerts: z.array(AlertSchema).max(MAX_ALERTS),
     dashboardRefs: z.array(DashboardReferenceSchema).max(5),
@@ -249,19 +260,27 @@ const IncidentDataSchema = z
   })
   .strict();
 
-const RenderDataSchema = z
-  .object({
+const RenderIdentityFields = {
     dashboardId: LogicalIdSchema,
     panelId: LogicalIdSchema.optional(),
     requestedRange: TimeRangeSchema,
-    effectiveRange: TimeRangeSchema,
     width: z.number().int().min(1).max(2_400),
     height: z.number().int().min(1).max(4_000),
-    rawByteSize: z.number().int().min(1).max(8 * 1_024 * 1_024),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/),
-    renderDurationMs: z.number().int().min(0).max(30_000),
-  })
-  .strict();
+} as const;
+
+const RenderDataSchema = z.discriminatedUnion("available", [
+  z
+    .object({
+      ...RenderIdentityFields,
+      available: z.literal(true),
+      effectiveRange: TimeRangeSchema,
+      rawByteSize: z.number().int().min(1).max(8 * 1_024 * 1_024),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      renderDurationMs: z.number().int().min(0).max(30_000),
+    })
+    .strict(),
+  z.object({ ...RenderIdentityFields, available: z.literal(false) }).strict(),
+]);
 
 export const CapabilitiesResultSchema = evidenceEnvelope(CapabilitiesDataSchema);
 export const HealthSnapshotResultSchema = evidenceEnvelope(
@@ -277,7 +296,11 @@ export const RenderPanelResultSchema = evidenceEnvelope(
     if (data.panelId === undefined) {
       context.addIssue({ code: "custom", message: "panel renders require panelId" });
     }
-    if (data.width > 1_600 || data.height > 900 || data.rawByteSize > 4 * 1_024 * 1_024) {
+    if (
+      data.width > 1_600 ||
+      data.height > 900 ||
+      (data.available && data.rawByteSize > 4 * 1_024 * 1_024)
+    ) {
       context.addIssue({ code: "custom", message: "panel render exceeds its configured limit" });
     }
   }),

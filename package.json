@@ -34,17 +34,22 @@
     "inspector:list": "mcp-inspector --cli node dist/cli.js --method tools/list",
     "audit": "npm audit --audit-level=high",
     "package:dry": "npm pack --dry-run",
-    "validate": "npm run typecheck && npm test && npm run build && npm run test:stdio && npm run inspector:list && npm run package:dry && npm run audit && ./ci/validate-foundation.sh",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "validate": "npm run typecheck && npm test && npm run build && npm run test:stdio && npm run inspector:list && npm run package:smoke && npm run audit && ./ci/validate-foundation.sh",
     "start": "node dist/cli.js",
-    "container:build": "docker build --file Containerfile --tag observability-agent-mcp:local ."
+    "container:build": "docker build --file Containerfile --tag observability-agent-mcp:local .",
+    "container:smoke": "bash scripts/container-smoke.sh observability-agent-mcp:local"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "express": "5.2.1",
     "pngjs": "7.0.0",
+    "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@modelcontextprotocol/inspector": "0.22.0",
+    "@types/express": "5.0.6",
     "@types/node": "24.10.4",
     "@types/pngjs": "6.0.5",
     "typescript": "5.9.3",
