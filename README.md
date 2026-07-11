@@ -1,12 +1,14 @@
 # Observability Agent MCP
 
-A portable, read-only Model Context Protocol server for turning observability
-data into bounded evidence that AI agents can inspect safely.
+A portable Model Context Protocol server for bounded observability evidence and
+an optional approval-gated CI operations module.
 
 ## Status
 
-Runnable provider-backed MCP. The TypeScript server exposes seven bounded,
-read-only tools over stdio and authenticated Streamable HTTP. It includes
+Runnable provider-backed MCP. The default TypeScript server exposes seven
+bounded, read-only observability tools over stdio and authenticated Streamable
+HTTP. An optional GitHub Actions module adds four read-only CI tools and one
+strictly approval-gated failed-job rerun. It includes
 VictoriaMetrics/Prometheus-compatible metrics and alert adapters, allowlisted
 Grafana PNG rendering, deterministic local fixtures, npm packaging, and a
 non-root OCI runtime. Private deployment configuration remains outside this
@@ -14,9 +16,9 @@ public repository.
 
 ## Product Boundary
 
-This project provides deterministic tools for observability evidence. It does
-not run an LLM, receive chat messages, execute shell commands, deploy workloads,
-or remediate production systems.
+This project provides deterministic tools for observability and CI evidence. It
+does not run an LLM, receive chat messages, execute shell commands, modify
+source, deploy workloads, or expand repository trust.
 
 ```text
 AI client
@@ -36,8 +38,8 @@ Observability Agent MCP
        - VictoriaMetrics
 ```
 
-The model and agent loop remain in the client. This server only returns
-structured evidence.
+The model and agent loop remain in the client. The only optional mutation is an
+allowlisted rerun of failed jobs after a fresh, one-time operator approval.
 
 ## First Tool Set
 
@@ -53,6 +55,22 @@ structured evidence.
 
 Version 1 is read-only. It will not create dashboards, modify alert rules,
 silence alerts, restart services, run scripts, or trigger deployments.
+
+## Optional CI Tool Set
+
+| Tool | Purpose |
+| --- | --- |
+| `ci.workflow_status` | Inspect one allowlisted workflow run. |
+| `ci.failed_job_analysis` | Classify failed jobs deterministically. |
+| `ci.log_evidence` | Return bounded, redacted job-log evidence. |
+| `ci.remediation_plan` | Produce a runbook-backed dry-run plan. |
+| `ci.rerun_failed_workflow` | Rerun failed jobs after a bound one-time approval. |
+
+The CI module is disabled unless a deployment supplies an allowlist, GitHub App
+installation identity, approval key, replay store, and metadata-only audit
+store. The public controlled fixture is
+`.github/workflows/goal14-controlled-fixture.yml`: attempt 1 fails and an
+approved failed-job rerun succeeds. See [CI/CD Runbook](docs/ci-cd-runbook.md).
 
 ## Portability
 
@@ -105,8 +123,8 @@ npm run container:build
 docker run --rm -i observability-agent-mcp:local
 ```
 
-Production HTTP mode requires a strict YAML provider policy and two `0600`
-runtime credential files. See [Client Compatibility](docs/client-compatibility.md)
+Production HTTP mode requires a strict YAML provider policy and `0600` runtime
+credential files. See [Client Compatibility](docs/client-compatibility.md)
 and [Security Model](docs/security-model.md) before deploying it.
 
 ## Relationship To Grafana MCP

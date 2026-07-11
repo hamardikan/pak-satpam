@@ -21,6 +21,13 @@ required=(
   tsconfig.build.json
   Containerfile
   src/cli.ts
+  src/approval-cli.ts
+  src/approval.ts
+  src/ci/approval.ts
+  src/ci/index.ts
+  src/ci/policy.ts
+  src/ci/service.ts
+  src/domain/ci-schemas.ts
   src/server/create-server.ts
   src/domain/tool-schemas.ts
   src/domain/visual-policy.ts
@@ -32,6 +39,7 @@ required=(
   src/runtime/load-runtime-configuration.ts
   src/visuals/synthetic-renderer.ts
   scripts/container-smoke.sh
+  scripts/assert-tool-surface.mjs
   scripts/http-smoke.mjs
   scripts/package-smoke.mjs
 )
@@ -50,6 +58,9 @@ grep -q "observability.render_panel" docs/tool-surface.md
 grep -q "observability.render_dashboard" docs/tool-surface.md
 grep -q "ImageContent" docs/tool-surface.md
 grep -q "agentSafe: true" docs/tool-surface.md
+grep -q "ci.rerun_failed_workflow" docs/tool-surface.md
+grep -q "goal14-controlled-fixture.yml" README.md
+test -f .github/workflows/goal14-controlled-fixture.yml
 
 for pattern in \
   '[a-z0-9.-]+\.ts\.net' \

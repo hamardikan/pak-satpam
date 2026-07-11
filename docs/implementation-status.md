@@ -1,6 +1,20 @@
 # Implementation Status
 
-Last updated: 2026-07-10
+Last updated: 2026-07-11
+
+## Goal 14: CI/CD Analysis And Gated Rerun
+
+Implemented locally:
+
+- Provider-neutral CI schemas and a GitHub Actions adapter.
+- Four bounded read-only tools plus one approval-gated failed-job rerun.
+- Eight deterministic failure classes and runbook-backed dry-run plans.
+- Pre-output log redaction, strict allowlists, freshness checks, GitHub App
+  installation auth, atomic replay protection, and metadata-only audit events.
+- An operator-only approval CLI and controlled first-attempt failure workflow.
+
+Live edge deployment and controlled Discord evidence remain private-infra
+responsibilities and are not implied by this public repository state.
 
 ## Goal 11: Private Provider Shadow
 
@@ -28,7 +42,7 @@ Verified private-shadow behavior:
 Current boundaries:
 
 - No public endpoint or OAuth authorization-server integration.
-- No write, remediation, shell, CI/CD, alert mutation, or dashboard mutation tools.
+- No shell, source write, deployment, alert mutation, or dashboard mutation tools.
 - No logs or traces until the metrics contract is stable.
 - No npm or OCI release has been published.
 

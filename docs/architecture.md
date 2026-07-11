@@ -8,6 +8,7 @@
 - Return small, deterministic evidence rather than raw backend payloads.
 - Run locally through stdio or remotely through authenticated Streamable HTTP.
 - Keep provider credentials outside prompts, tool results, logs, and storage.
+- Keep CI provider adapters portable and the rerun action deny-by-default.
 
 ## Runtime
 
@@ -29,13 +30,13 @@
                          | - bound               |
                          | - normalize           |
                          | - redact              |
-                         +-----+------------+----+
-                               |            |
-                  +------------v--+      +--v--------------------+
-                  | Grafana port  |      | Metrics query port    |
-                  +------------+--+      +--+--------------------+
-                               |            |
-                         Grafana API     Prometheus-compatible API
+                         +-----+------------+----------------+
+                               |            |                |
+                  +------------v--+  +------v-----------+ +--v----------------+
+                  | Grafana port  |  | Metrics port     | | CI provider port  |
+                  +------------+--+  +------+-----------+ +--+----------------+
+                               |            |                |
+                         Grafana API   Prometheus API    GitHub Actions API
 ```
 
 ## Bounded Contexts
@@ -60,12 +61,20 @@ they do not expose provider response bodies directly to MCP clients.
 Owns configured providers, datasource allowlists, time ranges, query deadlines,
 series limits, output limits, and tool availability.
 
+### CI Operations
+
+Owns provider-neutral run/job schemas, deterministic failure classification,
+log redaction, repository/workflow allowlists, approval verification, replay
+state, and metadata-only audit events. GitHub App authentication is an adapter;
+the domain does not depend on GitHub response shapes. The rerun port exposes
+only `rerun-failed-jobs` and cannot dispatch, cancel, deploy, or write source.
+
 ## Non-Responsibilities
 
 - Webhook/event ingestion.
 - Discord or other chat gateways.
 - LLM selection or prompting.
-- CI/CD reruns.
+- CI/CD mutations other than the optional approved failed-job rerun.
 - Shell or script execution.
 - Infrastructure mutation.
 - Secret management products.

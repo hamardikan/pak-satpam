@@ -1,0 +1,19 @@
+name: Goal 14 controlled fixture
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-failure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail only on the first run attempt
+        run: |
+          if [ "${{ github.run_attempt }}" -eq 1 ]; then
+            echo "controlled fixture fails on the initial attempt"
+            exit 1
+          fi
+          echo "controlled fixture succeeds after an approved failed-job rerun"

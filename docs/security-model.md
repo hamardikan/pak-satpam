@@ -6,6 +6,10 @@ Version 1 is read-only and deny-by-default. A configured backend does not imply
 that every datasource, label, metric, dashboard, or time range is available to
 every client.
 
+The optional version 0.2 CI module preserves that default. Four CI tools are
+read-only; the sole mutation is a failed-job rerun protected by exact
+repository/workflow allowlists and a fresh one-time approval.
+
 ## Trust Boundaries
 
 1. MCP requests are untrusted input.
@@ -130,6 +134,20 @@ PNG bytes are not logged or persisted by default.
 
 There are no write scopes in version 1.
 
+## CI Approval Boundary
+
+- A repository-installed GitHub App mints one-hour installation tokens scoped
+  to the allowlisted repository with Actions write permission only.
+- Approval tokens are HMAC signed and bound to repository, workflow, run ID,
+  run attempt, head SHA, request ID, nonce, issue time, and expiry; TTL is at
+  most 300 seconds.
+- Replay and request digests are consumed atomically before the provider action.
+- Every denial and outcome appends bounded, redacted metadata; approval tokens,
+  GitHub tokens, PEM material, and raw logs are never audited.
+- Job-log redirects are followed only to HTTPS GitHub Actions storage hosts.
+- The action rechecks fresh failed/cancelled state before calling exactly
+  `rerun-failed-jobs`.
+
 ## Explicitly Forbidden
 
 - Generic shell or command tools.
@@ -138,5 +156,6 @@ There are no write scopes in version 1.
 - Alert silencing or rule mutation.
 - Dashboard mutation.
 - Service restart or deployment tools.
+- Workflow dispatch, cancellation, arbitrary rerun, or source-writing tools.
 - Persisting unredacted provider payloads.
 - Generic screenshot, browser automation, or arbitrary render tools.

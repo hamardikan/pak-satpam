@@ -11,6 +11,7 @@ import type {
   ObservabilityVisualProvider,
 } from "../providers/observability-provider.js";
 import { createObservabilityServer } from "../server/create-server.js";
+import type { CIService } from "../ci/service.js";
 
 export interface CreateObservabilityHttpAppOptions {
   readonly provider: ObservabilityProvider;
@@ -20,6 +21,7 @@ export interface CreateObservabilityHttpAppOptions {
   readonly clock?: Clock;
   readonly visualAllowlist?: VisualAllowlist;
   readonly visualProvider?: ObservabilityVisualProvider;
+  readonly ci?: CIService;
 }
 
 export function createObservabilityHttpApp(options: CreateObservabilityHttpAppOptions) {
@@ -48,6 +50,7 @@ export function createObservabilityHttpApp(options: CreateObservabilityHttpAppOp
         ? {}
         : { visualAllowlist: options.visualAllowlist }),
       ...(options.visualProvider === undefined ? {} : { visualProvider: options.visualProvider }),
+      ...(options.ci === undefined ? {} : { ci: options.ci }),
     });
     const transport = new StreamableHTTPServerTransport();
     let closed = false;

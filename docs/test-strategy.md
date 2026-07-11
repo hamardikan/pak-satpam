@@ -52,6 +52,10 @@ safe variables, renderer failure, and teardown without production data.
   panels, redirects, oversized or blank images, and render concurrency limits.
 - Secret sentinels in rendered pixels or image bytes persisted to logs, evidence
   files, or cross-principal caches.
+- CI log secrets, malformed provider data, unavailable GitHub, stale runs,
+  permission denial, policy rejection, duplicate approvals, replayed or expired
+  tokens, concurrent approval consumption, failed reruns, and incomplete audit
+  metadata.
 
 ## Live Shadow
 

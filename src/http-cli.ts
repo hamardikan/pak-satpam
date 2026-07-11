@@ -20,6 +20,7 @@ const app = createObservabilityHttpApp({
   provider: runtime.provider,
   visualProvider: runtime.visualProvider,
   visualAllowlist: runtime.visualAllowlist,
+  ...(runtime.ci === undefined ? {} : { ci: runtime.ci }),
   bearerToken: runtime.bearerToken,
   host,
   allowedHosts,

@@ -3,6 +3,7 @@ import process from "node:process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { assertToolSurface } from "./assert-tool-surface.mjs";
 
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -15,8 +16,8 @@ const client = new Client({ name: "stdio-smoke", version: "1.0.0" });
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 7);
-  assert(tools.tools.every((tool) => tool.annotations?.readOnlyHint === true));
+  assertToolSurface(tools.tools);
+  assert(tools.tools.filter((tool) => tool.name.startsWith("observability.")).every((tool) => tool.annotations?.readOnlyHint === true));
 
   const health = CallToolResultSchema.parse(
     await client.callTool({

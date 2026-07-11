@@ -1,7 +1,7 @@
 {
   "name": "@hamardikan/observability-agent-mcp",
-  "version": "0.1.0",
-  "description": "Portable read-only MCP server for bounded observability evidence",
+  "version": "0.2.0",
+  "description": "Portable MCP server for bounded observability and approval-gated CI evidence",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,12 +10,22 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./approval": {
+      "types": "./dist/approval.d.ts",
+      "import": "./dist/approval.js"
+    },
+    "./ci": {
+      "types": "./dist/ci/index.d.ts",
+      "import": "./dist/ci/index.js"
+    },
     "./package.json": "./package.json"
   },
   "license": "Apache-2.0",
   "private": false,
   "bin": {
-    "observability-agent-mcp": "dist/cli.js"
+    "observability-agent-mcp": "dist/cli.js",
+    "observability-agent-mcp-approval": "dist/approval-cli.js",
+    "observability-agent-mcp-approve": "dist/approval-cli.js"
   },
   "files": [
     "dist",
@@ -29,12 +39,14 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:ci": "vitest run tests/ci-*.test.ts tests/github-actions-provider.test.ts",
     "test:watch": "vitest",
     "test:stdio": "node scripts/stdio-smoke.mjs",
     "inspector:list": "mcp-inspector --cli node dist/cli.js --method tools/list",
     "audit": "npm audit --audit-level=high",
     "package:dry": "npm pack --dry-run",
     "package:smoke": "node scripts/package-smoke.mjs",
+    "approval": "node dist/approval-cli.js",
     "validate": "npm run typecheck && npm test && npm run build && npm run test:stdio && npm run inspector:list && npm run package:smoke && npm run audit && ./ci/validate-foundation.sh",
     "start": "node dist/cli.js",
     "container:build": "docker build --file Containerfile --tag observability-agent-mcp:local .",

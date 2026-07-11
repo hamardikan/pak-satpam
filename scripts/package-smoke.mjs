@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { assertToolSurface } from "./assert-tool-surface.mjs";
 
 const root = process.cwd();
 const temporary = mkdtempSync(join(tmpdir(), "observability-agent-mcp-package-"));
@@ -41,7 +42,7 @@ try {
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.equal(tools.tools.length, 7);
+    assertToolSurface(tools.tools);
   } finally {
     await client.close();
   }

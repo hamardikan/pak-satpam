@@ -1,6 +1,6 @@
 # Tool Surface
 
-These are the implemented version 1 tool names and result shapes. Versioned
+These are the implemented tool names and result shapes. Versioned
 machine-readable Zod schemas and contract tests enforce them. Provider-specific
 details remain behind adapters.
 
@@ -96,8 +96,26 @@ evidence section and reports dropped or truncated fields in `warnings`.
 `dashboard`. Renderer failure preserves structured evidence and returns an
 explicit visual-availability warning.
 
+## Optional CI Tools
+
+The CI namespace is absent unless deployment policy enables it. Every input is
+bound to an allowlisted `owner/repository` and workflow file.
+
+- `ci.workflow_status`: bounded status, conclusion, attempt, ref, SHA, and freshness.
+- `ci.failed_job_analysis`: failed jobs classified as build, test, lint,
+  dependency, deployment, infrastructure-connectivity, permission, or unknown.
+- `ci.log_evidence`: at most 200 redacted lines from one job; raw logs are not persisted.
+- `ci.remediation_plan`: deterministic `dryRun: true` steps with a public runbook reference.
+- `ci.rerun_failed_workflow`: verifies a maximum-five-minute HMAC approval
+  bound to repository, workflow, run, attempt, head SHA, request, and nonce; rejects stale,
+  duplicate, replayed, successful, queued, and out-of-policy requests.
+
+The action calls only GitHub's `rerun-failed-jobs` endpoint. It does not accept
+commands, refs, workflow inputs, URLs, source changes, deployment targets, or
+secret values.
+
 ## Deferred Tools
 
-Logs, traces, profiles, CI/CD, alert mutation, dashboard mutation, and runtime
-actions are outside the first release. Each requires a separate contract and
-security review.
+Observability logs, traces, profiles, workflow dispatch/cancel, source writes,
+deployment, alert mutation, dashboard mutation, and runtime actions remain
+outside the release. Each requires a separate contract and security review.

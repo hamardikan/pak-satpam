@@ -81,9 +81,20 @@ without receiving secrets or raw backend payloads.
 Visible product: a versioned release that another operator can install without
 any private infrastructure repository.
 
+## M6: CI/CD Analysis And Gated Rerun
+
+- Provider-neutral CI domain with a GitHub Actions adapter.
+- Bounded status, analysis, log evidence, and remediation-plan tools.
+- One allowlisted failed-job rerun with short-lived human approval, replay
+  protection, and metadata-only audit.
+- Controlled first-attempt failure fixture and rollback-compatible packaging.
+
+Visible product: an agent explains a failed workflow and can rerun only its
+failed jobs after an operator issues a one-time bound approval.
+
 ## Deferred
 
 - Logs and traces until metrics behavior is stable.
-- CI/CD modules.
-- Write tools or remediation.
+- Additional CI/CD providers and actions.
+- Write tools or remediation beyond the approved failed-job rerun.
 - Hosted multi-tenant service.

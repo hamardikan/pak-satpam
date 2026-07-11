@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,6 +85,28 @@ describe("private runtime configuration", () => {
         fetch,
       }),
     ).toThrow("Secret file permissions are too broad");
+  });
+
+  it("loads the optional CI module only from private credential files", () => {
+    const appIdPath = join(directory, "github-app-id");
+    const installationIdPath = join(directory, "github-installation-id");
+    const privateKeyPath = join(directory, "github-private-key.pem");
+    const approvalKeyPath = join(directory, "approval-key");
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    writeFileSync(appIdPath, "123\n", { mode: 0o600 });
+    writeFileSync(installationIdPath, "456\n", { mode: 0o600 });
+    writeFileSync(privateKeyPath, privateKey.export({ type: "pkcs1", format: "pem" }), { mode: 0o600 });
+    writeFileSync(approvalKeyPath, "a".repeat(32), { mode: 0o600 });
+    writeFileSync(configPath, `${VALID_CONFIG}\nci:\n  enabled: true\n  allowlist:\n    - repo: owner/repo\n      workflows: [goal14-controlled-fixture.yml]\n  github:\n    api_base_url: https://api.github.com\n    app:\n      app_id_file: ${appIdPath}\n      installation_id_file: ${installationIdPath}\n      pem_key_file: ${privateKeyPath}\n  approval:\n    key_file: ${approvalKeyPath}\n    replay_file: ${join(directory, "replay.jsonl")}\n    audit_file: ${join(directory, "audit.jsonl")}\n  max_freshness_seconds: 300\n`);
+
+    const runtime = loadRuntimeConfiguration({
+      configPath,
+      grafanaTokenPath,
+      mcpTokenPath,
+      fetch,
+      clock: () => FIXED_NOW,
+    });
+    expect(runtime.ci).toBeDefined();
   });
 });
 

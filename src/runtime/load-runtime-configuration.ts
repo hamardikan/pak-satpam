@@ -11,6 +11,12 @@ import type {
   ObservabilityVisualProvider,
 } from "../providers/observability-provider.js";
 import { VictoriaMetricsProvider } from "../providers/victoriametrics-provider.js";
+import { CIRepositorySchema, CIWorkflowSchema } from "../domain/ci-schemas.js";
+import { ApprovalTokenService, FileApprovalAuditStore } from "../ci/approval.js";
+import { createCIAllowlist } from "../ci/policy.js";
+import type { CIService } from "../ci/service.js";
+import { GitHubActionsProvider } from "../providers/github-actions-provider.js";
+import { GitHubAppTokenProvider } from "../providers/github-app-token-provider.js";
 
 const MAX_CONFIG_BYTES = 256 * 1_024;
 
@@ -58,6 +64,39 @@ const DashboardSchema = z
   })
   .strict();
 
+const CIAllowlistEntrySchema = z
+  .object({ repo: CIRepositorySchema, workflows: z.array(CIWorkflowSchema).min(1).max(50) })
+  .strict();
+const GitHubAppSchema = z
+  .object({
+    app_id_file: z.string().min(1).max(1_024),
+    installation_id_file: z.string().min(1).max(1_024),
+    pem_key_file: z.string().min(1).max(1_024),
+  })
+  .strict();
+const CIConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    allowlist: z.array(CIAllowlistEntrySchema).max(100).default([]),
+    github: z
+      .object({
+        api_base_url: z.literal("https://api.github.com").default("https://api.github.com"),
+        app: GitHubAppSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    approval: z
+      .object({
+        key_file: z.string().min(1).max(1_024),
+        replay_file: z.string().min(1).max(1_024),
+        audit_file: z.string().min(1).max(1_024),
+      })
+      .strict()
+      .optional(),
+    max_freshness_seconds: z.number().int().min(1).max(3_600).default(300),
+  })
+  .strict();
+
 const RuntimeConfigSchema = z
   .object({
     version: z.literal(1),
@@ -75,6 +114,7 @@ const RuntimeConfigSchema = z
         dashboards: z.record(LogicalIdSchema, DashboardSchema),
       })
       .strict(),
+    ci: CIConfigSchema.optional(),
   })
   .strict()
   .superRefine((configuration, context) => {
@@ -105,6 +145,7 @@ export class LoadedRuntimeConfiguration {
     public readonly visualProvider: ObservabilityVisualProvider,
     public readonly visualAllowlist: VisualAllowlist,
     bearerToken: string,
+    public readonly ci: CIService | undefined = undefined,
   ) {
     this.#bearerToken = bearerToken;
   }
@@ -187,12 +228,57 @@ export function loadRuntimeConfiguration(
     dashboards,
   });
 
+  const ci = buildCIConfiguration(configuration.ci, options);
+
   return new LoadedRuntimeConfiguration(
     provider,
     visualProvider,
     { dashboards: allowlistDashboards },
     bearerToken,
+    ci,
   );
+}
+
+function buildCIConfiguration(
+  configuration: z.infer<typeof CIConfigSchema> | undefined,
+  options: LoadRuntimeConfigurationOptions,
+): CIService | undefined {
+  if (configuration?.enabled !== true) return undefined;
+  if (configuration.allowlist.length === 0 || configuration.github === undefined || configuration.approval === undefined) {
+    throw new Error("Invalid CI runtime configuration");
+  }
+  const repositories = configuration.allowlist.map((entry) => entry.repo);
+  const tokenProvider = configuration.github.app === undefined
+    ? undefined
+    : GitHubAppTokenProvider.fromPemFile({
+        appId: readNumericSecretFile(configuration.github.app.app_id_file),
+        installationId: readNumericSecretFile(configuration.github.app.installation_id_file),
+        pemKeyFile: configuration.github.app.pem_key_file,
+        allowedRepositories: repositories,
+        fetch: options.fetch,
+        ...(options.clock === undefined ? {} : { clock: options.clock }),
+        apiBaseUrl: configuration.github.api_base_url,
+      });
+  if (tokenProvider === undefined) throw new Error("CI runtime configuration requires a GitHub App or token file");
+  const key = ApprovalTokenService.readKeyFile(configuration.approval.key_file);
+  const audit = new FileApprovalAuditStore({ replayPath: configuration.approval.replay_file, auditPath: configuration.approval.audit_file });
+  return {
+    provider: new GitHubActionsProvider({
+      tokenProvider,
+      fetch: options.fetch,
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
+      apiBaseUrl: configuration.github.api_base_url,
+      maxFreshnessMs: configuration.max_freshness_seconds * 1_000,
+    }),
+    policy: createCIAllowlist(Object.fromEntries(configuration.allowlist.map((entry) => [entry.repo, entry.workflows]))),
+    approval: new ApprovalTokenService({ key, clock: options.clock ?? (() => new Date()), audit }),
+  };
+}
+
+function readNumericSecretFile(path: string): string {
+  const value = readBoundedFile(path, true).trim();
+  if (!/^\d+$/.test(value)) throw new Error("Invalid CI runtime configuration");
+  return value;
 }
 
 function readBoundedFile(path: string, secret: boolean): string {
