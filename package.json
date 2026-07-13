@@ -1,7 +1,7 @@
 {
   "name": "@hamardikan/observability-agent-mcp",
   "version": "0.2.0",
-  "description": "Portable MCP server for bounded observability and approval-gated CI evidence",
+  "description": "Pak Satpam: bounded observability and approval-gated CI evidence for AI agents",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

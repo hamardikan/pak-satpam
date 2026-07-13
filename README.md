@@ -1,109 +1,89 @@
-# Observability Agent MCP
+<div align="center">
 
-A portable Model Context Protocol server for bounded observability evidence and
-an optional approval-gated CI operations module.
+# Pak Satpam
 
-## Status
+### The bounded observability and CI guard for AI agents
 
-Runnable provider-backed MCP. The default TypeScript server exposes seven
-bounded, read-only observability tools over stdio and authenticated Streamable
-HTTP. An optional GitHub Actions module adds four read-only CI tools and one
-strictly approval-gated failed-job rerun. It includes
-VictoriaMetrics/Prometheus-compatible metrics and alert adapters, allowlisted
-Grafana PNG rendering, deterministic local fixtures, npm packaging, and a
-non-root OCI runtime. Private deployment configuration remains outside this
-public repository.
+Pak Satpam gives an AI agent the evidence it needs to understand infrastructure
+health, investigate incidents, inspect CI failures, and show Grafana visuals
+without handing the model a shell or unrestricted infrastructure access.
 
-## Product Boundary
+[![Validate](../../actions/workflows/validate.yml/badge.svg)](../../actions/workflows/validate.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-2f6f4e.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-43853d.svg)](package.json)
+[![MCP](https://img.shields.io/badge/protocol-MCP-111827.svg)](https://modelcontextprotocol.io/)
 
-This project provides deterministic tools for observability and CI evidence. It
-does not run an LLM, receive chat messages, execute shell commands, modify
-source, deploy workloads, or expand repository trust.
+</div>
 
-```text
-AI client
-  | stdio (implemented)
-  v
-Observability Agent MCP
-  - strict tool schemas
-  - query and response limits
-  - label and value redaction
-  - normalized evidence bundles
-  |
-  +--> deterministic fake provider
-  +--> allowlisted Grafana render API
-  +--> named-query Prometheus-compatible API
-       +--> VictoriaMetrics alert API
-       - Prometheus
-       - VictoriaMetrics
-```
+> **Pak Satpam** means *the security guard*. It watches, reports, and follows a
+> strict access policy. It does not become the infrastructure administrator.
 
-The model and agent loop remain in the client. The only optional mutation is an
-allowlisted rerun of failed jobs after a fresh, one-time operator approval.
+This is the production-ready evolution of the original Pak Satpam prototype:
+a portable Model Context Protocol server with deterministic provider adapters,
+bounded responses, redaction, and approval-gated CI operations. The agent and
+chat experience remain separate, so the same MCP can serve Hermes/Tabby,
+desktop agents, CI assistants, or another MCP-compatible client.
 
-## First Tool Set
-
-| Tool | Purpose |
-| --- | --- |
-| `observability.capabilities` | Describe configured providers and safe limits. |
-| `observability.health_snapshot` | Return bounded service and target health. |
-| `observability.active_alerts` | Return normalized active alert metadata. |
-| `observability.query_metrics` | Run a bounded instant or range metrics query. |
-| `observability.render_panel` | Return one allowlisted Grafana panel as PNG evidence. |
-| `observability.render_dashboard` | Return one allowlisted Grafana dashboard as PNG evidence. |
-| `observability.incident_context` | Build a compact evidence bundle for one alert or service. |
-
-Version 1 is read-only. It will not create dashboards, modify alert rules,
-silence alerts, restart services, run scripts, or trigger deployments.
-
-## Optional CI Tool Set
-
-| Tool | Purpose |
-| --- | --- |
-| `ci.workflow_status` | Inspect one allowlisted workflow run. |
-| `ci.failed_job_analysis` | Classify failed jobs deterministically. |
-| `ci.log_evidence` | Return bounded, redacted job-log evidence. |
-| `ci.remediation_plan` | Produce a runbook-backed dry-run plan. |
-| `ci.rerun_failed_workflow` | Rerun failed jobs after a bound one-time approval. |
-
-The CI module is disabled unless a deployment supplies an allowlist, GitHub App
-installation identity, approval key, replay store, and metadata-only audit
-store. The public controlled fixture is
-`.github/workflows/goal14-controlled-fixture.yml`: attempt 1 fails and an
-approved failed-job rerun succeeds. See [CI/CD Runbook](docs/ci-cd-runbook.md).
-
-## Portability
-
-The server can be consumed through:
-
-- stdio for local desktop and CLI agents;
-- an authenticated Streamable HTTP endpoint on a private network;
-- a non-root OCI image;
-- the package CLI produced by `npm pack`.
-
-The implemented HTTP mode uses a file-injected Bearer credential and a strict
-Host allowlist for a private, single-operator deployment. It is not a public or
-multi-tenant OAuth deployment.
-
-The public multi-architecture image is published for `linux/amd64` and
-`linux/arm64` at:
+## What It Does
 
 ```text
-ghcr.io/hamardikan/observability-agent-mcp
+Engineer
+   |
+   v
+AI agent (Hermes, Tabby, desktop client, or another MCP client)
+   |
+   |  stdio or authenticated private HTTP
+   v
+Pak Satpam
+   |-- validates every request against a strict schema
+   |-- bounds queries, time windows, output size, and labels
+   |-- normalizes and redacts provider evidence
+   |
+   +--> Grafana panels and dashboard PNGs
+   +--> Prometheus / VictoriaMetrics metrics
+   +--> VictoriaMetrics alert state
+   +--> GitHub Actions evidence
 ```
 
-Production deployments should consume an immutable `@sha256:` digest from the
-GitHub Actions publisher, not a mutable tag. Runtime policy, credentials, and
-network exposure remain deployment-owned and are intentionally excluded from
-the image.
+The default server exposes seven read-only observability tools. An optional CI
+module adds four read-only tools and one tightly scoped operation that can rerun
+failed GitHub Actions jobs only after a fresh, one-time operator approval.
 
-Remote HTTP deployment requires authentication. Publishing this repository does
-not imply that an MCP endpoint should be exposed without OAuth, network policy,
-rate limits, and audience-bound scopes.
+Pak Satpam does **not** run an LLM, receive chat messages, execute arbitrary
+shell commands, modify source, deploy workloads, read secrets, or silently
+expand its own permissions.
 
-## Run Locally
+## Tool Surface
 
-Node.js 22 and npm are required.
+### Observability
+
+| Tool | What the agent receives |
+| --- | --- |
+| `observability.capabilities` | Configured providers, features, and safety limits |
+| `observability.health_snapshot` | Bounded service and scrape-target health |
+| `observability.active_alerts` | Normalized active-alert metadata |
+| `observability.query_metrics` | Allowlisted instant or range metrics results |
+| `observability.render_panel` | One allowlisted Grafana panel as PNG evidence |
+| `observability.render_dashboard` | One allowlisted Grafana dashboard as PNG evidence |
+| `observability.incident_context` | A compact evidence bundle for an alert or service |
+
+### CI/CD (optional)
+
+| Tool | What the agent receives or may request |
+| --- | --- |
+| `ci.workflow_status` | Status for one allowlisted workflow run |
+| `ci.failed_job_analysis` | Deterministic failure classification |
+| `ci.log_evidence` | Bounded and redacted job-log evidence |
+| `ci.remediation_plan` | A runbook-backed dry-run plan |
+| `ci.rerun_failed_workflow` | Approved rerun of failed jobs only |
+
+The CI module stays disabled until the deployment provides repository and
+workflow allowlists, a GitHub App identity, a replay-safe approval key, and
+metadata-only audit storage. See the [CI/CD runbook](docs/ci-cd-runbook.md).
+
+## Run It
+
+Pak Satpam requires Node.js 22 or newer.
 
 ```bash
 npm ci
@@ -111,80 +91,98 @@ npm run build
 node dist/cli.js
 ```
 
-The process speaks MCP over stdio, so launch it from an MCP client rather than
-typing into the terminal. A client command definition is:
+The command speaks MCP over stdio. Configure it in a compatible client instead
+of typing into the process directly:
 
 ```json
 {
   "command": "node",
-  "args": ["/absolute/path/to/observability-agent-mcp/dist/cli.js"]
+  "args": ["/absolute/path/to/pak-satpam/dist/cli.js"]
 }
 ```
 
-Inspect tool discovery and run every local gate with:
+Run the complete local verification suite with:
 
 ```bash
-npm run inspector:list
 npm run validate
 ```
 
-Build and run the non-root OCI image over stdio with:
+### Container
+
+The public non-root image supports `linux/amd64` and `linux/arm64`:
+
+```text
+ghcr.io/hamardikan/observability-agent-mcp
+```
+
+Production deployments should pin the image by immutable `@sha256:` digest.
+For a local build and stdio smoke run:
 
 ```bash
 npm run container:build
 docker run --rm -i observability-agent-mcp:local
 ```
 
-Production HTTP mode requires a strict YAML provider policy and `0600` runtime
-credential files. See [Client Compatibility](docs/client-compatibility.md)
-and [Security Model](docs/security-model.md) before deploying it.
+## Connect It to an Agent
 
-## Relationship To Grafana MCP
-
-The [official Grafana MCP server](https://github.com/grafana/mcp-grafana) is the
-preferred reference and fast path for broad Grafana capabilities. This project
-will not duplicate its dashboard and administration surface.
-
-| Capability | Grafana MCP | This project |
+| Client location | Recommended transport | Intended use |
 | --- | --- | --- |
-| Broad Grafana dashboards and administration | Primary owner | Not implemented |
-| Grafana datasource queries | Supported | Narrow adapter only |
-| Direct Prometheus-compatible backend without Grafana | Not the primary path | Supported goal |
-| Provider-neutral incident evidence | Provider-specific | Primary owner |
-| Conservative read-only public contract | Configurable broad surface | Required default |
+| Same machine | stdio | Desktop and CLI agents |
+| Private network | Streamable HTTP | Shared Hermes/Tabby or agent runtime |
+| OCI host | stdio or private HTTP | Podman/Docker deployments |
+| Public network | Not ready | Requires OAuth and tenant isolation first |
 
-The unique scope here is:
+Private HTTP mode uses a file-injected bearer credential and an exact Host
+allowlist. It is designed for a private, single-operator network. Publishing
+the repository or image does not make an unauthenticated public endpoint safe.
+See [Client compatibility](docs/client-compatibility.md) and the
+[Security model](docs/security-model.md) before deployment.
 
-- compact incident-context evidence;
-- conservative read-only defaults;
-- direct Prometheus-compatible operation when Grafana is absent;
-- provider-neutral schemas;
-- predictable limits and redaction for agent use.
+## Visual Evidence
 
-Grafana visuals are first-class evidence. Rendering tools return an MCP
-`ImageContent` PNG plus structured metadata for the source, observation window,
-dimensions, byte size, freshness, truncation, and warnings. Visuals are opt-in;
-normal metric queries do not spend rendering resources or image context.
+Grafana visuals are first-class MCP evidence. Panel and dashboard tools return
+PNG `ImageContent` together with structured metadata: source, observation
+window, dimensions, byte size, freshness, truncation, and warnings.
 
-There is no automatic delegation between the two servers. Use Grafana MCP when
-an agent needs Grafana-native dashboards, incidents, administration, or its
-existing query tools. Use this project's namespace when the client needs the
-same bounded evidence contract across Grafana and direct
-Prometheus-compatible backends. `active_alerts` and `incident_context` are
-normalized here rather than forwarded to Grafana MCP; `query_metrics` selects
-one configured adapter and never calls another MCP server. Deployments may
-offer both namespaces, but each request has one explicit owner.
+Rendering is opt-in. Normal health and metrics requests do not spend browser,
+renderer, or image-context resources. If rendering is unavailable, Pak Satpam
+fails to a structured evidence response instead of inventing a graph.
 
-## Read Next
+## Why Not Just Use Grafana MCP?
+
+The official [Grafana MCP](https://github.com/grafana/mcp-grafana) is the right
+choice for broad Grafana-native queries and administration. Pak Satpam owns a
+narrower boundary intended for operational agents:
+
+| Capability | Grafana MCP | Pak Satpam |
+| --- | --- | --- |
+| Grafana administration | Primary owner | Not implemented |
+| Grafana datasource queries | Broad support | Narrow allowlisted adapter |
+| Direct Prometheus-compatible backend | Secondary path | Supported |
+| Provider-neutral incident evidence | Provider-specific | Primary contract |
+| Conservative read-only default | Configurable | Required |
+| Approval-gated CI evidence | Not its scope | Optional module |
+
+Both servers can be offered to one agent, but every request must have one clear
+owner. Pak Satpam never silently delegates to another MCP server.
+
+## Project Boundary
+
+This public repository owns the portable protocol, schemas, provider adapters,
+redaction, tests, npm package, and OCI image. A deployment repository should
+own private endpoints, network policy, provider allowlists, credentials, and
+runtime configuration. Private topology and secrets do not belong here.
+
+## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Security Model](docs/security-model.md)
-- [Tool Surface](docs/tool-surface.md)
-- [Client Compatibility](docs/client-compatibility.md)
-- [Test Strategy](docs/test-strategy.md)
+- [Tool surface](docs/tool-surface.md)
+- [Security model](docs/security-model.md)
+- [Client compatibility](docs/client-compatibility.md)
+- [Test strategy](docs/test-strategy.md)
+- [Implementation status](docs/implementation-status.md)
 - [Roadmap](docs/roadmap.md)
-- [Implementation Status](docs/implementation-status.md)
-- [Grafana Visual Context ADR](docs/decisions/0002-grafana-visual-context.md)
+- [Grafana visual context ADR](docs/decisions/0002-grafana-visual-context.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
