@@ -87,7 +87,8 @@ failure-and-rerun test. See the [CI/CD runbook](docs/ci-cd-runbook.md).
 
 The package and OCI image also include `observability-agent-mcp-observer`. It
 polls only configured GitHub Actions workflow allowlists, stores private
-metadata-only cursor and dedupe state, and sends signed success or failure
+metadata-only cursor and dedupe state, suppresses stale historical backfill,
+and sends signed fresh success or failure
 events to operator-controlled internal routes. It does not add MCP tools and
 cannot rerun workflows, modify source, deploy, or own a chat gateway.
 

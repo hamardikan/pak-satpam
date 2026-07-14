@@ -55,6 +55,7 @@ export interface ObserverMetricsSnapshot {
   readonly deliveryFailures: number;
   readonly targetErrors: number;
   readonly observations: number;
+  readonly suppressed: number;
   readonly outcomes: Readonly<Record<ObserverOutcome, number>>;
   readonly targetCount: number;
   readonly truncatedTargets: number;
@@ -79,6 +80,7 @@ export class InMemoryObserverMetrics {
   #deliveryFailures = 0;
   #targetErrors = 0;
   #observations = 0;
+  #suppressed = 0;
   #targetCount = 0;
   #truncatedTargets = 0;
   #lastPollDegraded = false;
@@ -90,6 +92,7 @@ export class InMemoryObserverMetrics {
 
   recordPoll(targetCount: number, at: string): void { this.#polls += 1; this.#targetCount = targetCount; this.#lastPollAt = at; }
   recordObservation(outcome: ObserverOutcome): void { this.#observations += 1; this.#outcomes[outcome] += 1; }
+  recordSuppressed(): void { this.#suppressed += 1; }
   recordDelivery(): void { this.#deliveries += 1; }
   recordDeliveryFailure(): void { this.#deliveryFailures += 1; }
   recordTargetError(outcome: "unavailable" | "malformed"): void { this.#targetErrors += 1; this.#lastError = outcome; this.#outcomes[outcome] += 1; }
@@ -105,6 +108,7 @@ export class InMemoryObserverMetrics {
       deliveryFailures: this.#deliveryFailures,
       targetErrors: this.#targetErrors,
       observations: this.#observations,
+      suppressed: this.#suppressed,
       outcomes: { ...this.#outcomes },
       targetCount: this.#targetCount,
       truncatedTargets: this.#truncatedTargets,
@@ -194,13 +198,26 @@ export class ObserverRuntime {
               const prior = (mutableState.targets[targetKey] ?? currentTarget).seen[eventId];
               if (attempted.has(eventId)) continue;
               attempted.add(eventId);
-              const statusDelivered = prior?.statusDelivery === "delivered" || prior?.delivery === "delivered";
+              const statusDelivered = isSettledDelivery(prior?.statusDelivery) || isSettledDelivery(prior?.delivery);
               const analysisRequired = isAnalysisConclusion(run.conclusion);
-              const analysisDelivered = !analysisRequired || prior?.analysisDelivery === "delivered";
+              const analysisDelivered = !analysisRequired || isSettledDelivery(prior?.analysisDelivery);
               if (statusDelivered && analysisDelivered) continue;
               const outcome = outcomeForRun(run, now, this.#config.staleAfterMs);
               this.#metrics.recordObservation(outcome);
               observed.push({ eventId, runId: run.id, outcome });
+              if (outcome === "stale") {
+                currentTarget = markSeen(mutableState.targets[targetKey] ?? currentTarget, eventId, {
+                  outcome,
+                  observedAt: now.toISOString(),
+                  delivery: "suppressed",
+                  statusDelivery: "suppressed",
+                  ...(analysisRequired ? { analysisDelivery: "suppressed" as const } : {}),
+                });
+                mutableState.targets[targetKey] = currentTarget;
+                this.#state.save(withUpdatedAt(mutableState, now));
+                this.#metrics.recordSuppressed();
+                continue;
+              }
               if (!statusDelivered) {
                 const statusEvent = await this.buildEvent(run, outcome, now, false);
                 currentTarget = markSeen(mutableState.targets[targetKey] ?? currentTarget, eventId, { outcome, observedAt: statusEvent.observedAt, delivery: "pending", statusDelivery: "pending" });
@@ -466,6 +483,7 @@ export function renderObserverMetrics(snapshot: ObserverMetricsSnapshot): string
     `observer_delivery_failures_total ${snapshot.deliveryFailures}`,
     `observer_target_errors_total ${snapshot.targetErrors}`,
     `observer_observations_total ${snapshot.observations}`,
+    `observer_suppressed_total ${snapshot.suppressed}`,
     `observer_targets ${snapshot.targetCount}`,
     `observer_truncated_targets ${snapshot.truncatedTargets}`,
   ];
@@ -550,6 +568,10 @@ function serializeObserverEvent(event: ObserverEvent, maxBytes: number): string 
 
 function deliveryEventId(eventId: string, route: "status" | "analysis"): string {
   return `${eventId}:${route}`;
+}
+
+function isSettledDelivery(state: ObserverSeenRecord["statusDelivery"]): boolean {
+  return state === "delivered" || state === "suppressed";
 }
 
 function markSeen(target: ObserverTargetState, eventId: string, record: Pick<ObserverSeenRecord, "outcome" | "observedAt"> & Partial<ObserverSeenRecord>): ObserverTargetState {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export type ObserverDeliveryState = "pending" | "delivered";
+export type ObserverDeliveryState = "pending" | "delivered" | "suppressed";
 
 export interface ObserverSeenRecord {
   readonly outcome: string;
@@ -134,10 +134,10 @@ function isStateDocument(value: unknown): value is ObserverStateDocument {
     for (const seen of Object.values(record.seen as Record<string, unknown>)) {
       if (seen === null || typeof seen !== "object" || Array.isArray(seen)) return false;
       const item = seen as Record<string, unknown>;
-      if (typeof item.outcome !== "string" || typeof item.observedAt !== "string" || !["pending", "delivered"].includes(String(item.delivery))) return false;
-      if (item.statusDelivery !== undefined && !["pending", "delivered"].includes(String(item.statusDelivery))) return false;
+      if (typeof item.outcome !== "string" || typeof item.observedAt !== "string" || !["pending", "delivered", "suppressed"].includes(String(item.delivery))) return false;
+      if (item.statusDelivery !== undefined && !["pending", "delivered", "suppressed"].includes(String(item.statusDelivery))) return false;
       if (item.statusDeliveredAt !== undefined && typeof item.statusDeliveredAt !== "string") return false;
-      if (item.analysisDelivery !== undefined && !["pending", "delivered"].includes(String(item.analysisDelivery))) return false;
+      if (item.analysisDelivery !== undefined && !["pending", "delivered", "suppressed"].includes(String(item.analysisDelivery))) return false;
       if (item.analysisDeliveredAt !== undefined && typeof item.analysisDeliveredAt !== "string") return false;
     }
   }

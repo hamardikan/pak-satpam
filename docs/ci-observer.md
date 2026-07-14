@@ -31,11 +31,14 @@ run ID, and attempt. This avoids a creation-time cursor missing a long-running
 workflow that completes later. A page window that remains truncated degrades
 health and is visible in metadata-only metrics.
 
-Success, skipped, neutral, stale, and other non-analysis outcomes use the
-status route. Failure, cancelled, timed-out, and action-required outcomes use
-the analysis route. The observer never invokes `rerun-failed-jobs`; an agent may
-request that action only through Pak Satpam's separate short-lived approval
-contract.
+Fresh success, skipped, neutral, and other non-analysis outcomes use the status
+route. Fresh failure, cancelled, timed-out, and action-required outcomes use
+the status route first and the analysis route second. Stale historical runs are
+recorded as suppressed for durable deduplication; they never call either route
+or failure-analysis providers. `observer_suppressed_total` exposes this
+suppression without creating notifications. The observer never invokes
+`rerun-failed-jobs`; an agent may request that action only through Pak Satpam's
+separate short-lived approval contract.
 
 ## Health And Metrics
 

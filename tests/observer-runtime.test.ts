@@ -271,6 +271,29 @@ describe("portable observer runtime", () => {
     expect(ci.getFailedJobAnalysis).not.toHaveBeenCalled();
   });
 
+  it("records stale runs without delivering status or analysis", async () => {
+    const stale = run("54", "failure", new Date(NOW.getTime() - 11 * 60_000).toISOString());
+    const ci = provider({ listWorkflowRuns: vi.fn().mockResolvedValue({ runs: [stale], hasMore: false }) });
+    const deliver = vi.fn().mockResolvedValue(undefined);
+    const state = new InMemoryObserverStateStore();
+    const metrics = new InMemoryObserverMetrics();
+    const runtime = new ObserverRuntime({ config: config(), provider: ci, state, deliver, clock: () => NOW, metrics });
+
+    await expect(runtime.pollOnce()).resolves.toMatchObject({ delivered: 0, observed: [{ runId: "54", outcome: "stale" }] });
+    await expect(runtime.pollOnce()).resolves.toMatchObject({ delivered: 0, observed: [] });
+
+    expect(deliver).not.toHaveBeenCalled();
+    expect(ci.getFailedJobAnalysis).not.toHaveBeenCalled();
+    expect(ci.getLogEvidence).not.toHaveBeenCalled();
+    expect(ci.getRemediationPlan).not.toHaveBeenCalled();
+    expect(Object.values(state.load().targets)[0]?.seen["owner/repo:ci.yml:54:1"]).toMatchObject({
+      delivery: "suppressed",
+      statusDelivery: "suppressed",
+      analysisDelivery: "suppressed",
+    });
+    expect(metrics.snapshot()).toMatchObject({ suppressed: 1, deliveries: 0 });
+  });
+
   it("enforces exact repository/workflow allowlists", async () => {
     const ci = provider({ listWorkflowRuns: vi.fn().mockResolvedValue({ runs: [], hasMore: false }) });
     const runtime = new ObserverRuntime({
@@ -315,6 +338,35 @@ describe("observer state and Hermes delivery", () => {
       expect(statSync(path).mode & 0o077).toBe(0);
       expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ version: 1 });
       release?.();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reloads suppressed delivery records from private file state", () => {
+    const directory = mkdtempSync(join(tmpdir(), "observer-suppressed-state-"));
+    const path = join(directory, "state.json");
+    try {
+      const state = new FileObserverStateStore({ filePath: path, leaseMs: 30_000, clock: () => NOW });
+      state.save({
+        version: 1,
+        updatedAt: NOW.toISOString(),
+        targets: {
+          target: {
+            page: 1,
+            seen: {
+              "owner/repo:ci.yml:54:1": {
+                outcome: "stale",
+                observedAt: NOW.toISOString(),
+                delivery: "suppressed",
+                statusDelivery: "suppressed",
+                analysisDelivery: "suppressed",
+              },
+            },
+          },
+        },
+      });
+      expect(state.load().targets.target?.seen["owner/repo:ci.yml:54:1"]).toMatchObject({ delivery: "suppressed" });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -445,20 +497,6 @@ describe("observer state and Hermes delivery", () => {
     await expect(runtime.pollOnce()).resolves.toMatchObject({ errors: [], delivered: 0 });
     expect(ci.listWorkflowRuns).toHaveBeenCalledTimes(3);
     expect(Object.values(state.load().targets)[0]).not.toHaveProperty("backoffUntil");
-  });
-
-  it("analyzes stale failed runs and keeps them on the analysis route", async () => {
-    const oldFailure = run("99", "failure", "2026-07-13T00:00:00.000Z");
-    const ci = provider({ listWorkflowRuns: vi.fn().mockResolvedValue({ runs: [oldFailure], hasMore: false }) });
-    const deliver = vi.fn().mockResolvedValue(undefined);
-    const runtime = new ObserverRuntime({ config: config(), provider: ci, state: new InMemoryObserverStateStore(), deliver, clock: () => NOW });
-
-    await expect(runtime.pollOnce()).resolves.toMatchObject({ observed: [{ outcome: "stale" }], delivered: 2 });
-    expect(ci.getFailedJobAnalysis).toHaveBeenCalledWith({ repo: "owner/repo", workflow: "ci.yml", runId: "99" });
-    expect(ci.getRemediationPlan).toHaveBeenCalledWith({ repo: "owner/repo", workflow: "ci.yml", runId: "99" });
-    expect(deliver.mock.calls[0]?.[2]).toBe("success");
-    expect(deliver.mock.calls[1]?.[2]).toBe("analysis");
-    expect(JSON.parse(String(deliver.mock.calls[1]?.[0]))).toMatchObject({ terminalConclusion: "failure", outcome: "stale", freshness: "stale", analysis: { failedJobCount: 1 } });
   });
 
   it("degrades current health when the bounded terminal window is truncated and recovers on a clean poll", async () => {
