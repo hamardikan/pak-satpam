@@ -118,6 +118,24 @@ describe("release metadata", () => {
     expect(readText("src/server/create-server.ts")).toMatch(/version: VERSION/);
   });
 
+  it("bounds and owns container runtime smoke resources", () => {
+    const validationWorkflow = readText(".github/workflows/validate.yml");
+    const runtimeSmoke = readText("scripts/container-runtime-smoke.sh");
+    const containerSmoke = readText("scripts/container-smoke.sh");
+
+    expect(validationWorkflow).toMatch(/name: Bounded multi-architecture container runtime smoke\s+timeout-minutes: 15/);
+    for (const script of [runtimeSmoke, containerSmoke]) {
+      expect(script).toContain("timeout --foreground");
+      expect(script).toContain("trap cleanup EXIT");
+      expect(script).toContain("trap 'cleanup; exit 130' INT");
+      expect(script).toContain("trap 'cleanup; exit 143' TERM");
+    }
+    expect(runtimeSmoke).toContain("created_images");
+    expect(runtimeSmoke).toContain("docker image rm");
+    expect(containerSmoke).toContain("volume_created");
+    expect(containerSmoke).toContain("docker volume rm");
+  });
+
   it("pins the OCI build and exposes metadata-only verification", () => {
     const containerfile = readText("Containerfile");
     expect(containerfile.match(/FROM node:22\.22\.3-bookworm-slim@sha256:[0-9a-f]{64}/g)).toHaveLength(2);

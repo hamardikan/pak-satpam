@@ -30,4 +30,6 @@ jobs:
       - run: npm run container:build:multiarch
       - run: npm run container:build
       - run: npm run container:smoke
-      - run: ./scripts/container-runtime-smoke.sh
+      - name: Bounded multi-architecture container runtime smoke
+        timeout-minutes: 15
+        run: ./scripts/container-runtime-smoke.sh
