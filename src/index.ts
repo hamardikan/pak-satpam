@@ -8,6 +8,7 @@ export type { RuntimeConfiguration, RuntimeProviderMetadata } from "./runtime/lo
 export { diagnoseRuntimeConfiguration } from "./diagnostics/config-diagnostics.js";
 export * from "./approval.js";
 export * from "./ci/index.js";
+export * from "./scm/index.js";
 export type {
   ObservabilityProvider,
   ObservabilityVisualProvider,

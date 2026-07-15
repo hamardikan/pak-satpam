@@ -27,6 +27,10 @@
       "types": "./dist/ci/index.d.ts",
       "import": "./dist/ci/index.js"
     },
+    "./scm": {
+      "types": "./dist/scm/index.d.ts",
+      "import": "./dist/scm/index.js"
+    },
     "./observer": {
       "types": "./dist/observer/index.d.ts",
       "import": "./dist/observer/index.js"
