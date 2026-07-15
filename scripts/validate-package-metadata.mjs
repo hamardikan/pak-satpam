@@ -16,6 +16,7 @@ assert(args.every((arg, index) => arg === "--require-built" || (arg === "--tag" 
 const packageJson = readJson("package.json");
 const packageLock = readJson("package-lock.json");
 const serverJson = readJson("server.json");
+const sourceVersion = readText("src/version.ts");
 const version = packageJson.version;
 const packageName = "@hmrdkn-labs/pak-satpam";
 const mcpName = "io.github.hmrdkn-labs/pak-satpam";
@@ -29,7 +30,8 @@ const legacyBins = {
 
 assert(packageJson.name === packageName, `package name must be ${packageName}`);
 assert(packageJson.mcpName === mcpName, `package mcpName must be ${mcpName}`);
-assert(isVersion(version), "package version must be a concrete semantic version");
+assert(isVersion(version), "package version must be a strict semantic version");
+assert(sourceVersion.match(/export const VERSION = "([^"]+)";/)?.[1] === version, "src/version.ts VERSION is inconsistent");
 assert(packageJson.repository?.url === "git+https://github.com/hmrdkn-labs/pak-satpam.git", "package repository is not canonical");
 assert(packageJson.homepage === "https://github.com/hmrdkn-labs/pak-satpam#readme", "package homepage is not canonical");
 assert(packageJson.bugs?.url === "https://github.com/hmrdkn-labs/pak-satpam/issues", "package issue URL is not canonical");
@@ -67,7 +69,9 @@ assert(serverPackage.identifier === packageName, "server.json package identifier
 assert(serverPackage.version === version, "server.json package version is inconsistent");
 assert(serverPackage.transport?.type === "stdio", "server.json package transport must be stdio");
 
-assert(readText("CHANGELOG.md").includes(`## [${version}]`), "CHANGELOG.md has no package version entry");
+const changelogEntries = [...readText("CHANGELOG.md").matchAll(/^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})$/gm)];
+assert(changelogEntries.length > 0, "CHANGELOG.md has no dated release entries");
+assert(changelogEntries.filter(([, entryVersion]) => entryVersion === version).length === 1, "CHANGELOG.md must contain exactly one dated package version entry");
 if (tag !== undefined) {
   assert(tag === `v${version}`, `release tag ${tag} does not match package version ${version}`);
 }
@@ -83,7 +87,9 @@ function readText(relativePath) {
 }
 
 function isVersion(value) {
-  return typeof value === "string" && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
+  if (typeof value !== "string") return false;
+  const match = value.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
+  return Boolean(match) && !(match[4] ?? "").split(".").some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"));
 }
 
 function sortObject(value) {

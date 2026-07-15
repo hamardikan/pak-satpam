@@ -2,6 +2,8 @@
 set -euo pipefail
 
 builder="${BUILDX_BUILDER:-pak-satpam-ci}"
+version="$(node -p "require('./package.json').version")"
+revision="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 created=false
 
 if ! docker buildx inspect "$builder" >/dev/null 2>&1; then
@@ -21,7 +23,9 @@ docker buildx build \
   --builder "$builder" \
   --platform linux/amd64,linux/arm64 \
   --file Containerfile \
-  --tag observability-agent-mcp:multiarch-ci \
+  --build-arg "VERSION=$version" \
+  --build-arg "VCS_REF=$revision" \
+  --tag "ghcr.io/hmrdkn-labs/pak-satpam:ci-$revision" \
   --provenance=false \
   --sbom=false \
   --output type=cacheonly \

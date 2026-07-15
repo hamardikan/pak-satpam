@@ -30,5 +30,14 @@ a publication receipt.
 - OCI image: ghcr.io/hmrdkn-labs/pak-satpam.
 - Legacy observability-agent-mcp executable aliases remain supported.
 
+### Release Hardening
+
+- Pin both OCI build stages to the official Node multi-platform digest.
+- Exercise real OCI stdio and private HTTP MCP clients on linux/amd64 and
+  linux/arm64 during non-publishing validation.
+- Enforce strict semantic version and dated changelog consistency, immutable
+  version/SHA image tags, and post-publish manifest, provenance, and SPDX SBOM
+  verification.
+
 This entry records the source/documentation state. It does not claim that npm,
 GHCR, a private edge runtime, or a Hermes route was published or deployed.

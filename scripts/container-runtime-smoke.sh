@@ -4,6 +4,8 @@ set -euo pipefail
 image="${1:-observability-agent-mcp:runtime-smoke}"
 platforms_string="${CONTAINER_RUNTIME_PLATFORMS:-linux/amd64 linux/arm64}"
 builder="${BUILDX_BUILDER:-pak-satpam-runtime-smoke}"
+version="$(node -p "require('./package.json').version")"
+revision="${GITHUB_SHA:-$(git rev-parse HEAD)}"
 created=false
 
 if ! docker buildx inspect "$builder" >/dev/null 2>&1; then
@@ -37,12 +39,15 @@ for platform in "${platforms[@]}"; do
     --builder "$builder" \
     --platform "$platform" \
     --file Containerfile \
+    --build-arg "VERSION=$version" \
+    --build-arg "VCS_REF=$revision" \
     --tag "$platform_tag" \
     --provenance=false \
     --sbom=false \
     --load \
     .
 
+  CONTAINER_PLATFORM="$platform" node scripts/container-stdio-smoke.mjs "$platform_tag" "$platform"
   CONTAINER_PLATFORM="$platform" ./scripts/container-smoke.sh "$platform_tag"
   echo "container_runtime_platform=$platform status=ok"
 done

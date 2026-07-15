@@ -23,8 +23,8 @@ Run the foundation/link gate independently when editing documentation:
 ~~~
 
 The public workflow adds non-publishing multi-architecture Buildx verification,
-a local image build and smoke test, and per-platform runtime smoke for
-linux/amd64 and linux/arm64. The workflow does not publish or deploy.
+a local image build and smoke test, and per-platform OCI stdio and HTTP runtime
+smoke for linux/amd64 and linux/arm64. The workflow does not publish or deploy.
 
 ## Contract Coverage
 
@@ -41,7 +41,9 @@ linux/amd64 and linux/arm64. The workflow does not publish or deploy.
 - Transport tests cover stdio, Streamable HTTP, bearer denial, Host denial,
   MCP initialization, tool discovery, and read-only calls.
 - Package and metadata tests cover npm identity, aliases, OCI identity,
-  Inspector discovery, and installed-package launch.
+  Inspector discovery, installed-package launch, strict semantic version and
+  changelog consistency, immutable OCI tags, and post-publish attestation
+  verification wiring.
 
 ## Security Negatives
 

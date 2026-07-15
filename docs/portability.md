@@ -41,6 +41,20 @@ npm run test:stdio
 node dist/cli.js
 ~~~
 
+The release validator requires one strict semantic version across package.json,
+package-lock.json, server.json, src/version.ts, and the dated changelog entry.
+Prepare a future release with an explicit version, date, and notes file; this
+command changes source metadata only and never creates a Git tag or publishes:
+
+~~~bash
+npm run release:prepare -- \
+  --version 0.3.0 \
+  --date 2026-07-16 \
+  --notes-file ./release-notes.md
+npm run build
+npm run release:validate -- --require-built --tag v0.3.0
+~~~
+
 Do not type MCP requests into the process. Configure the executable as the
 command of an MCP-compatible client.
 
@@ -85,6 +99,28 @@ read-only. Pin the image by digest and retain the previous digest for rollback.
 The public validation workflow builds both target architectures without
 publishing, then runs per-platform runtime smoke where the host supports it.
 
+The OCI default command is also exercised as real MCP stdio on both platforms:
+
+~~~bash
+docker run --rm -i --platform linux/amd64 ghcr.io/hmrdkn-labs/pak-satpam@sha256:<immutable-digest>
+docker run --rm -i --platform linux/arm64 ghcr.io/hmrdkn-labs/pak-satpam@sha256:<immutable-digest>
+~~~
+
+For local validation, `./scripts/container-runtime-smoke.sh` builds each
+platform tag and runs both the stdio and private HTTP MCP clients. The image
+uses the multi-platform digest
+`sha256:e21fc383b50d5347dc7a9f1cae45b8f4e2f0d39f7ade28e4eef7d2934522b752` of
+`node:22.22.3-bookworm-slim`. To update it,
+inspect the official tag, replace the digest on both `FROM` lines, then rerun
+the release validator, multi-platform build, and both runtime smokes:
+
+~~~bash
+docker buildx imagetools inspect node:22.22.3-bookworm-slim
+npm run release:validate
+npm run container:build:multiarch
+CONTAINER_RUNTIME_PLATFORMS="linux/amd64 linux/arm64" ./scripts/container-runtime-smoke.sh
+~~~
+
 ## Profiles And Examples
 
 The examples/v1 directory contains placeholder-only contracts:
@@ -104,9 +140,11 @@ addresses, credentials, or topology to this repository.
 ## Release And Rollback
 
 Validation is non-publishing. The authorized release flow separately validates
-metadata, builds the artifact, and records the immutable reference. It does not
-deploy the runtime. A deployment owner must canary the pinned artifact privately,
-verify health and MCP read-only calls, and keep the previous pinned artifact.
+metadata, builds the artifact, records the immutable reference, and verifies
+the published manifest platforms plus BuildKit provenance and SPDX SBOM
+attestations with `docker buildx imagetools inspect`. It does not deploy the
+runtime. A deployment owner must canary the pinned artifact privately, verify
+health and MCP read-only calls, and keep the previous pinned artifact.
 
 Rollback means restarting the previous npm version or OCI digest with the same
 private configuration and credential paths, then repeating those checks. Do not

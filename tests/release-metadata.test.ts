@@ -83,7 +83,7 @@ describe("release metadata", () => {
   });
 
   it("has release notes and non-publishing registry validation", () => {
-    expect(readText("CHANGELOG.md")).toMatch(new RegExp(`## \\[${VERSION.replaceAll(".", "\\.")}\\]`));
+    expect(readText("CHANGELOG.md")).toMatch(new RegExp(`^## \\[${VERSION.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m"));
 
     const npmWorkflow = readText(".github/workflows/publish-npm.yml");
     expect(npmWorkflow).toMatch(/tags:\s*\n\s+- ['"]v\*\.\*\.\*['"]/);
@@ -98,12 +98,34 @@ describe("release metadata", () => {
     const containerWorkflow = readText(".github/workflows/publish-container.yml");
     expect(containerWorkflow).toMatch(/workflow_dispatch:/);
     expect(containerWorkflow).toMatch(/if: github\.ref == 'refs\/heads\/main'/);
+    expect(containerWorkflow).toMatch(/provenance: mode=max/);
+    expect(containerWorkflow).toMatch(/sbom: true/);
+    expect(containerWorkflow).toContain(":${{ steps.metadata.outputs.version }}");
+    expect(containerWorkflow).toContain(":v${{ steps.metadata.outputs.version }}");
+    expect(containerWorkflow).toContain(":sha-${{ github.sha }}");
+    expect(containerWorkflow).toContain("verify-published-image.mjs");
     expect(containerWorkflow).not.toMatch(/^\s+pull_request:\s*$/m);
     expect(containerWorkflow).not.toMatch(/^\s+push:\s*$/m);
     expect(npmWorkflow).not.toMatch(/^\s+pull_request:\s*$/m);
+    const validationWorkflow = readText(".github/workflows/validate.yml");
+    expect(validationWorkflow).toContain("release:validate -- --require-built");
+    expect(validationWorkflow).not.toMatch(/npm publish|push:\s*true/);
+    expect(readText("scripts/container-runtime-smoke.sh")).toContain("container-stdio-smoke.mjs");
     expect(readText("scripts/package-smoke.mjs")).toContain('"@hmrdkn-labs"');
     expect(readText("scripts/package-smoke.mjs")).not.toContain('"@hamardikan"');
     expect(readText("src/server/create-server.ts")).toMatch(/version: VERSION/);
+  });
+
+  it("pins the OCI build and exposes metadata-only verification", () => {
+    const containerfile = readText("Containerfile");
+    expect(containerfile.match(/FROM node:22\.22\.3-bookworm-slim@sha256:[0-9a-f]{64}/g)).toHaveLength(2);
+    expect(containerfile).toContain("org.opencontainers.image.version");
+    expect(containerfile).toContain("org.opencontainers.image.revision");
+    expect(existsSync(join(root, "scripts/container-stdio-smoke.mjs"))).toBe(true);
+    expect(existsSync(join(root, "scripts/prepare-release.mjs"))).toBe(true);
+    expect(existsSync(join(root, "scripts/verify-published-image.mjs"))).toBe(true);
+    expect(readText("scripts/verify-published-image.mjs")).toContain(".Provenance");
+    expect(readText("scripts/verify-published-image.mjs")).toContain(".SBOM");
   });
 });
 
