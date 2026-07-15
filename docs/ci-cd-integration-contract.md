@@ -43,11 +43,13 @@ payloads, and raw logs do not cross the MCP boundary.
 | GitHub Actions | supported | GitHub supported | optional named metrics | approval-gated failed jobs |
 | Jenkins | supported | Jenkins multibranch supported | optional named metrics | unsupported |
 | Bitbucket Cloud | supported | Cloud pull-request/diff supported | optional named metrics | unsupported |
-| Bitbucket Data Center | contract-only | contract-only | contract-only | unsupported |
+| Bitbucket Data Center | contract-only | contract-only | contract-only | unsupported; no runtime adapter |
 
 Provider name metadata is deployment-owned. The adapter kind and capabilities
 must agree before tools register. Bitbucket Cloud is reported as
-bitbucket-cloud; Data Center has no built-in runtime adapter.
+bitbucket-cloud; Data Center has no built-in runtime adapter or MCP tools. The
+future-adapter mapping and explicit unsupported behavior are in
+[the Data Center contract artifact](contracts/bitbucket-data-center-adapter.md).
 
 ## URL Contract
 

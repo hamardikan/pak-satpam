@@ -7,6 +7,9 @@ a publication receipt.
 
 ### Goal 19 CP3 Documentation And Contract
 
+- Add a contract-only Bitbucket Data Center provider artifact, normalized
+  evidence schema, fixture, and fail-closed runtime/no-tool tests; no Data
+  Center adapter or runtime support is added.
 - Document the direct provider-neutral SCM evidence contract and all six SCM
   budgets.
 - Document GitHub Actions, Jenkins, Bitbucket Cloud, and Bitbucket Data Center

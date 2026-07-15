@@ -356,6 +356,7 @@ function validRuntimeMetadata(ci: CIService): CIProviderRuntimeMetadata | undefi
   const metadata = ci.runtimeMetadata;
   if (metadata === undefined || metadata.name.trim().length === 0) return undefined;
   if (!CIProviderNameSchema.safeParse(metadata.name).success) return undefined;
+  if (!isSupportedRuntimeProviderType(metadata.type)) return undefined;
   if (metadata.capabilities.read && !hasCIReadPorts(ci.provider)) return undefined;
   if (ci.providerRegistry !== undefined) {
     const registration = ci.providerRegistry.get(metadata.name);
@@ -368,6 +369,10 @@ function validRuntimeMetadata(ci: CIService): CIProviderRuntimeMetadata | undefi
   if (metadata.capabilities.read !== true && metadata.capabilities.rerun !== true) return undefined;
   if (metadata.approvalRequired !== (metadata.type === "github" && metadata.capabilities.rerun)) return undefined;
   return metadata;
+}
+
+function isSupportedRuntimeProviderType(value: unknown): value is CIProviderRuntimeMetadata["type"] {
+  return value === "github" || value === "jenkins" || value === "bitbucket";
 }
 
 async function ciRead<TInput extends CIWorkflowStatusInput | CIFailedJobAnalysisInput | CILogEvidenceInput | CIRemediationPlanInput | CIFailureAnalysisInput | SCMChangeEvidenceInput | TelemetryCorrelationInput>(

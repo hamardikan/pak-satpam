@@ -1,7 +1,10 @@
 # Implementation Status
 
 Last reviewed: 2026-07-15
-Source audit baseline: 33347ad, branch codex/goal19-cp3-integration.
+Source evidence: current committed HEAD; this status intentionally avoids a
+self-stale pre-documentation SHA. Durable evidence: the Goal 19 contract
+artifact at `docs/contracts/bitbucket-data-center-adapter.md` and its fixture
+test at `tests/bitbucket-data-center-contract.test.ts`.
 
 ## Goal 19 Condition
 
@@ -9,7 +12,9 @@ The CP3 integration slice is implemented locally. The current source exposes the
 direct provider-neutral SCM contract as ci.scm_change_evidence, carries all six
 SCM budgets through the server/provider boundary, preserves provider-native IDs,
 registers capabilities from provider metadata, and keeps the observer's poll and
-webhook paths on one dedupe/stale-suppression state model.
+webhook paths on one dedupe/stale-suppression state model. The Bitbucket Data
+Center artifact is contract-only: its runtime selection is rejected, provider
+requests are not attempted, and it contributes no MCP tools.
 
 The local contract tests cover:
 
@@ -53,6 +58,8 @@ publication or deployment receipt.
 
 The current telemetry runtime bridge queries named metrics only. Log and trace
 types are bounded schema references, not raw log/trace provider integrations.
+Bitbucket Data Center remains deferred until a separately reviewed adapter,
+runtime configuration, and tool-surface gate exist.
 
 ## Publication And Deployment Blockers
 

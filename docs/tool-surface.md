@@ -51,10 +51,11 @@ against an exact repository/workflow allowlist.
 | ci.telemetry_correlation | bounded named telemetry correlation when configured |
 | ci.rerun_failed_workflow | GitHub-only failed-job rerun after fresh one-time approval |
 
-The first five read tools are available for every enabled provider. SCM and
-telemetry tools are opt-in configuration. Failure analysis remains read-only
-even when the rerun tool is available. The rerun is absent for Jenkins,
-Bitbucket Cloud, and Bitbucket Data Center.
+The first five read tools are available for every enabled runtime provider. SCM
+and telemetry tools are opt-in configuration. Failure analysis remains
+read-only even when the rerun tool is available. The rerun is absent for
+Jenkins and Bitbucket Cloud. Bitbucket Data Center is contract-only and is not
+an enabled runtime provider; it exposes no tools.
 
 ## SCM Contract
 

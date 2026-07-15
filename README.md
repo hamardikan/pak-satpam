@@ -48,11 +48,13 @@ rerun-failed-jobs, and it requires a fresh one-time operator approval.
 
 ## Current Condition
 
-This documentation is based on the Goal 19 CP3 integration implementation at
-source baseline 33347ad on branch codex/goal19-cp3-integration. The direct
-provider-neutral SCM contract, six SCM budgets, provider-native IDs, provider
-capability metadata, bounded telemetry/CI evidence, and observer dedupe/stale
-suppression are implemented and covered by local contract tests.
+This documentation is based on the current committed Goal 19 source evidence.
+The durable evidence references are the direct provider-neutral SCM contract,
+the Bitbucket Data Center contract-only artifact at
+`docs/contracts/bitbucket-data-center-adapter.md`, and their local contract
+tests. The six SCM budgets, provider-native IDs, provider capability metadata,
+bounded telemetry/CI evidence, and observer dedupe/stale suppression are
+implemented and covered by local contract tests.
 
 This checkout is not proof that a public release or private deployment exists.
 This task performs no publish or deploy. Publication still requires an
@@ -184,7 +186,7 @@ configuration or a Grafana credential.
 | GitHub Actions | status, failed-job analysis, redacted logs, dry-run remediation, failure analysis, optional telemetry/SCM | GitHub commits, comparisons, and pull requests | approval-gated failed jobs only | GitHub App files; separate read/write token paths are enforced by the adapter |
 | Jenkins | status, failed-job analysis, redacted console evidence, dry-run remediation, failure analysis, optional telemetry/SCM | configured multibranch job change evidence | unsupported | anonymous read or username/API token; credentialed transport requires HTTPS |
 | Bitbucket Cloud | pipeline status, failed-job analysis, redacted logs, dry-run remediation, failure analysis, optional telemetry/SCM | pull-request identity, diffstat, bounded diff evidence | unsupported | username:token or token plus username in a 0600 file; HTTPS required |
-| Bitbucket Data Center | contract-only | contract-only | unsupported | no built-in adapter or supported runtime profile |
+| Bitbucket Data Center | contract-only | contract-only | unsupported | [contract artifact only](docs/contracts/bitbucket-data-center-adapter.md); no built-in adapter or supported runtime profile |
 
 Provider identity is metadata, not a caller-selected URL. GitHub Actions emits
 github-actions and SCM emits github; Bitbucket Cloud emits bitbucket-cloud.
