@@ -261,6 +261,7 @@ ci:
 
     const runtime = loadRuntimeConfiguration({ configPath, grafanaTokenPath, mcpTokenPath, fetch, clock: () => FIXED_NOW });
 
+    expect(runtime.ci?.scm).toBeDefined();
     expect(runtime.ci?.forensics?.scm).toBeDefined();
     expect(runtime.ci?.forensics?.telemetry).toBeDefined();
     expect(JSON.stringify(runtime.runtimeMetadata)).not.toContain(directory);

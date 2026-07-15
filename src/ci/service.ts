@@ -4,6 +4,7 @@ import type { CIProvider } from "../providers/ci-provider.js";
 import type { CIProviderRegistry } from "../providers/ci-provider-registry.js";
 import type { CIProviderName } from "../domain/ci-provider-contracts.js";
 import type { ForensicsProviderSet } from "../providers/ci-provider.js";
+import type { SCMReadProvider } from "../scm/provider.js";
 
 export type CIProviderType = "github" | "jenkins" | "bitbucket";
 
@@ -27,4 +28,6 @@ export interface CIService {
   readonly runtimeMetadata?: CIProviderRuntimeMetadata;
   /** Optional provider-neutral read-only SCM and telemetry capabilities. */
   readonly forensics?: ForensicsProviderSet;
+  /** Direct CP3 SCM contract; the legacy forensics bridge remains separate. */
+  readonly scm?: SCMReadProvider;
 }

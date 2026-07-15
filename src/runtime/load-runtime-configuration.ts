@@ -22,6 +22,7 @@ import { GitHubActionsProvider } from "../providers/github-actions-provider.js";
 import { GitHubAppTokenProvider } from "../providers/github-app-token-provider.js";
 import { MappedGitHubAppTokenProvider } from "../providers/mapped-github-app-token-provider.js";
 import { BitbucketSCMProvider, GitHubSCMProvider, JenkinsSCMProvider } from "../scm/index.js";
+import type { SCMReadProvider } from "../scm/provider.js";
 import type { ForensicsProviderSet } from "../providers/ci-provider.js";
 import { SCMChangeEvidenceResultSchema as SCMAdapterResultSchema } from "../scm/schemas.js";
 import { SCMChangeEvidenceResultSchema as ForensicsSCMResultSchema } from "../domain/forensics-schemas.js";
@@ -29,6 +30,11 @@ import { CIProviderRegistry } from "../providers/ci-provider-registry.js";
 import { READ_ONLY_CI_PROVIDER_CAPABILITIES, APPROVAL_GATED_CI_PROVIDER_CAPABILITIES } from "../domain/ci-provider-contracts.js";
 
 const MAX_CONFIG_BYTES = 256 * 1_024;
+
+interface BuiltForensics {
+  readonly scm?: SCMReadProvider;
+  readonly forensics?: ForensicsProviderSet;
+}
 
 export const RUNTIME_PROFILES = ["observability-only", "ci-only", "combined"] as const;
 export type RuntimeProfile = (typeof RUNTIME_PROFILES)[number];
@@ -537,13 +543,14 @@ function buildCIConfiguration(
       : READ_ONLY_CI_PROVIDER_CAPABILITIES,
     provider,
   }]);
-  const forensics = buildForensics(selected.configuration, provider, repositories, options, observabilityProvider, clock);
+  const builtForensics = buildForensics(selected.configuration, provider, repositories, options, observabilityProvider, clock);
   return {
     provider,
     policy: createCIAllowlist(Object.fromEntries(configuration.allowlist.map((entry) => [entry.repo, entry.workflows]))),
     runtimeMetadata: selected.metadata,
     providerRegistry,
-    ...(forensics === undefined ? {} : { forensics }),
+    ...(builtForensics?.scm === undefined ? {} : { scm: builtForensics.scm }),
+    ...(builtForensics?.forensics === undefined ? {} : { forensics: builtForensics.forensics }),
     ...(approval === undefined ? {} : { approval }),
   };
 }
@@ -555,10 +562,10 @@ function buildForensics(
   options: LoadRuntimeConfigurationOptions,
   observabilityProvider: ObservabilityProvider | undefined,
   clock: Clock,
-): ForensicsProviderSet | undefined {
+): BuiltForensics | undefined {
   const configured = configuration.forensics;
   if (configured === undefined) return undefined;
-  const result: { scm?: ForensicsProviderSet["scm"]; telemetry?: ForensicsProviderSet["telemetry"] } = {};
+  const result: { scm?: SCMReadProvider; forensicsSCM?: NonNullable<ForensicsProviderSet["scm"]>; telemetry?: ForensicsProviderSet["telemetry"] } = {};
   if (configured.scm?.enabled === true) {
     const type = configured.scm.provider ?? configuration.type;
     if (type !== configuration.type) throw new Error("Invalid CI runtime configuration");
@@ -576,7 +583,8 @@ function buildForensics(
           ? (() => { throw new Error("Invalid CI runtime configuration"); })()
           : new JenkinsSCMProvider({ baseUrl, job: configured.scm.job, ...(configured.scm.branch === undefined ? {} : { branch: configured.scm.branch }), ...(configured.scm.token_file === undefined ? {} : { tokenFile: configured.scm.token_file }), ...(configured.scm.username === undefined ? {} : { username: configured.scm.username }), fetch: options.fetch, clock, allowedRepositories: repositories, allowedRefs })
         : new BitbucketSCMProvider({ baseUrl, ...(bitbucketTokenFile === undefined ? {} : { tokenFile: bitbucketTokenFile }), ...(configured.scm.username === undefined ? {} : { username: configured.scm.username }), fetch: options.fetch, clock, allowedRepositories: repositories, allowedRefs });
-    result.scm = wrapSCMProvider(scmAdapter);
+    result.scm = scmAdapter;
+    result.forensicsSCM = wrapSCMProvider(scmAdapter);
   }
   if (configured.telemetry?.enabled === true) {
     if (observabilityProvider === undefined) throw new Error("Invalid CI runtime configuration");
@@ -607,9 +615,15 @@ function buildForensics(
     };
   }
   if (result.scm === undefined && result.telemetry === undefined) return undefined;
+  const forensics = result.forensicsSCM === undefined && result.telemetry === undefined
+    ? undefined
+    : {
+        ...(result.forensicsSCM === undefined ? {} : { scm: result.forensicsSCM }),
+        ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }),
+      };
   return {
     ...(result.scm === undefined ? {} : { scm: result.scm }),
-    ...(result.telemetry === undefined ? {} : { telemetry: result.telemetry }),
+    ...(forensics === undefined ? {} : { forensics }),
   };
 }
 
@@ -626,7 +640,7 @@ function providerBaseUrl(configuration: unknown): string | undefined {
 }
 
 function wrapSCMProvider(adapter: {
-  getChangeEvidence(input: { repository: string; commit?: string; ref?: string; budget?: { maxBytes?: number; maxItems?: number; maxTokens?: number } }): Promise<unknown>;
+  getChangeEvidence(input: Parameters<SCMReadProvider["getChangeEvidence"]>[0]): Promise<unknown>;
 }): NonNullable<ForensicsProviderSet["scm"]> {
   return {
     async getChangeEvidence(input) {
@@ -635,8 +649,11 @@ function wrapSCMProvider(adapter: {
         commit: input.headSha,
         budget: {
           maxBytes: 512 * 1_024,
-          maxItems: input.maxChanges,
-          maxTokens: Math.max(64, Math.min(64 * 1_024, input.maxChanges * input.maxHunkLines * 8)),
+          maxFiles: input.maxChanges,
+          maxHunks: input.maxChanges,
+          maxLines: input.maxHunkLines,
+          maxProviderRequests: 4,
+          maxDurationMs: 10_000,
         },
       }));
       const changes = raw.data.files.slice(0, input.maxChanges).map((file) => ({

@@ -67,6 +67,11 @@ import {
   type SCMChangeEvidenceInput,
   type TelemetryCorrelationInput,
 } from "../domain/forensics-schemas.js";
+import {
+  SCMChangeEvidenceInputSchema as DirectSCMChangeEvidenceInputSchema,
+  SCMChangeEvidenceResultSchema as DirectSCMChangeEvidenceResultSchema,
+  type SCMChangeEvidenceInput as DirectSCMChangeEvidenceInput,
+} from "../scm/schemas.js";
 import { assembleFailureAnalysis } from "../ci/forensics.js";
 import { CIProviderError } from "../providers/ci-provider.js";
 import { hasCIReadPorts } from "../providers/ci-provider-registry.js";
@@ -285,7 +290,19 @@ function registerCITools(server: McpServer, ci: CIService, clock: Clock): void {
     );
   }
 
-  if (readCapability && ci.forensics?.scm !== undefined) {
+  if (readCapability && ci.scm !== undefined) {
+    const scmProvider = ci.scm;
+    server.registerTool(
+      "ci.scm_change_evidence",
+      {
+        description: `Return bounded, read-only SCM changes for ${providerLabel}.`,
+        inputSchema: DirectSCMChangeEvidenceInputSchema,
+        outputSchema: DirectSCMChangeEvidenceResultSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+      async (input) => scmRead(ci, input, DirectSCMChangeEvidenceResultSchema, clock, () => scmProvider.getChangeEvidence(input)),
+    );
+  } else if (readCapability && ci.forensics?.scm !== undefined) {
     const scmProvider = ci.forensics.scm;
     server.registerTool(
       "ci.scm_change_evidence",
@@ -360,6 +377,28 @@ async function ciRead<TInput extends CIWorkflowStatusInput | CIFailedJobAnalysis
 ): Promise<CallToolResult> {
   const auditBase = { event: "ci_read", tool, repo: input.repo, workflow: input.workflow, ...(input.runId === undefined ? {} : { runId: input.runId }), at: clock().toISOString() };
   if (!allowedCIInput(ci, input)) {
+    try { ci.approval?.audit({ ...auditBase, outcome: "policy_denied" }); } catch { return ciError("ci_audit_unavailable"); }
+    return ciError("ci_policy_denied");
+  }
+  try {
+    const result = schema.parse(withConfiguredProviderIdentity(await operation(), ci.runtimeMetadata?.name));
+    ci.approval?.audit({ ...auditBase, outcome: "success" });
+    return structuredResult(result);
+  } catch (error) {
+    try { ci.approval?.audit({ ...auditBase, outcome: "provider_failure" }); } catch { return ciError("ci_audit_unavailable"); }
+    return ciProviderError(error);
+  }
+}
+
+async function scmRead(
+  ci: CIService,
+  input: DirectSCMChangeEvidenceInput,
+  schema: { parse(value: unknown): Record<string, unknown> },
+  clock: Clock,
+  operation: () => Promise<unknown>,
+): Promise<CallToolResult> {
+  const auditBase = { event: "ci_read", tool: "ci.scm_change_evidence", repo: input.repository, workflow: "scm", at: clock().toISOString() };
+  if (ci.policy.workflowsByRepository[input.repository] === undefined) {
     try { ci.approval?.audit({ ...auditBase, outcome: "policy_denied" }); } catch { return ciError("ci_audit_unavailable"); }
     return ciError("ci_policy_denied");
   }

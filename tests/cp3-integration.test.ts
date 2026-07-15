@@ -14,6 +14,7 @@ import { createCIServer } from "../src/server/create-server.js";
 import { InMemoryObserverStateStore } from "../src/observer/state.js";
 import { ObserverRuntime, outcomeForRun } from "../src/observer/runtime.js";
 import type { ObserverConfig, ObserverProvider } from "../src/observer/index.js";
+import { SCMChangeEvidenceResultSchema } from "../src/scm/schemas.js";
 
 const NOW = new Date("2026-07-15T00:00:00.000Z");
 const SHA = "a".repeat(40);
@@ -232,6 +233,81 @@ describe("Goal 19 CP3 integration", () => {
       "ci.workflow_status", "ci.failed_job_analysis", "ci.log_evidence", "ci.remediation_plan", "ci.failure_analysis", "ci.scm_change_evidence", "ci.telemetry_correlation",
     ]);
     expect(tools.tools.some((tool) => tool.name === "ci.rerun_failed_workflow")).toBe(false);
+    await client.close();
+    await server.close();
+  });
+
+  it("exposes the direct SCM contract with provider-neutral selectors and all six budgets", async () => {
+    const getChangeEvidence = vi.fn(async (input) => {
+      expect(input).toEqual({
+        repository: "owner/repo",
+        compare: { base: "main", head: "feature" },
+        budget: { maxBytes: 4_096, maxFiles: 2, maxHunks: 3, maxLines: 6, maxProviderRequests: 2, maxDurationMs: 1_000 },
+      });
+      return SCMChangeEvidenceResultSchema.parse({
+        schemaVersion: "1.0",
+        observedAt: NOW.toISOString(),
+        providerClass: "github",
+        freshness: "fresh",
+        truncated: false,
+        truncation: { files: false, hunks: false, lines: false, bytes: false, providerRequests: false, timeWindow: false },
+        redactionsApplied: false,
+        digest: "a".repeat(64),
+        warnings: [],
+        budget: {
+          maxBytes: 4_096,
+          maxFiles: 2,
+          maxHunks: 3,
+          maxLines: 6,
+          maxProviderRequests: 2,
+          maxDurationMs: 1_000,
+          usedBytes: 100,
+          usedFiles: 1,
+          usedHunks: 1,
+          usedLines: 2,
+          usedProviderRequests: 1,
+          usedDurationMs: 5,
+        },
+        data: {
+          repository: "owner/repo",
+          selector: { compare: { base: "main", head: "feature" } },
+          base: { ref: "main", sha: SHA },
+          head: { ref: "feature", sha: SHA },
+          files: [],
+          summary: { files: 0, additions: 0, deletions: 0 },
+        },
+      });
+    });
+    const scm = {
+      getChangeEvidence,
+      getRepositoryEvidence: getChangeEvidence,
+    };
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createCIServer({
+      ci: {
+        provider: ciProvider(),
+        policy: createCIAllowlist({ "owner/repo": ["ci.yml"] }),
+        runtimeMetadata: { name: "github-prod", type: "github", capabilities: { read: true, rerun: false }, approvalRequired: false },
+        scm,
+      },
+      clock: () => NOW,
+    });
+    const client = new Client({ name: "cp3-scm-contract", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "ci.scm_change_evidence",
+      arguments: {
+        repository: "owner/repo",
+        compare: { base: "main", head: "feature" },
+        budget: { maxBytes: 4_096, maxFiles: 2, maxHunks: 3, maxLines: 6, maxProviderRequests: 2, maxDurationMs: 1_000 },
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain('"digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"');
+    expect(scm.getChangeEvidence).toHaveBeenCalledTimes(1);
     await client.close();
     await server.close();
   });
