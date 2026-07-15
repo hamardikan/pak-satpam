@@ -148,7 +148,8 @@ describe("Goal 19 CP3 integration", () => {
     expect(analysis.data.telemetrySignals).toHaveLength(1);
     expect(analysis.data.correlations.every((item) => item.confidence < 1)).toBe(true);
     expect(analysis.data.correlations.map((item) => item.source)).toEqual(["scm", "telemetry"]);
-    expect(JSON.stringify(analysis)).not.toContain("caus");
+    expect(analysis.data.correlations.every((item) => item.causality === "not-established")).toBe(true);
+    expect(analysis.data.correlations.every((item) => !/caus(?:e|ed|al)/i.test(item.summary))).toBe(true);
   });
 
   it("isolates malformed or unavailable SCM and telemetry without leaking provider details", async () => {

@@ -4,6 +4,7 @@ import {
   CILogEvidenceResultSchema,
   CIRemediationPlanResultSchema,
   CIWorkflowStatusResultSchema,
+  type CICategory,
   type CIJob,
   type CIProviderClass,
 } from "../domain/ci-schemas.js";
@@ -18,6 +19,9 @@ import {
   TelemetrySignalSchema,
   type CIFailureAnalysisInput,
   type CIFailureAnalysisResult,
+  ForensicsContextBudgetSchema,
+  type ForensicsContextBudget,
+  type ForensicsContextBudgetUsage,
   type ForensicsFreshness,
   type ForensicsProvenance,
 } from "../domain/forensics-schemas.js";
@@ -44,39 +48,63 @@ export interface AssembleFailureAnalysisOptions {
 export async function assembleFailureAnalysis(options: AssembleFailureAnalysisOptions): Promise<CIFailureAnalysisResult> {
   const input = CIFailureAnalysisInputSchema.parse(options.input);
   const clock = options.clock ?? (() => new Date());
-  const status = CIWorkflowStatusResultSchema.parse(await options.provider.getWorkflowStatus({ repo: input.repo, workflow: input.workflow, runId: input.runId }));
-  const analysis = CIFailedJobAnalysisResultSchema.parse(await options.provider.getFailedJobAnalysis({ repo: input.repo, workflow: input.workflow, runId: input.runId }));
+  const observedAt = clock().toISOString();
+  const budget = contextBudgetFor(input, clock());
+  let providerRequests = 0;
+  const request = async <T>(operation: () => Promise<T>): Promise<T | undefined> => {
+    if (providerRequests >= budget.maxProviderRequests) return undefined;
+    providerRequests += 1;
+    return operation();
+  };
+  const status = CIWorkflowStatusResultSchema.parse(await request(() => options.provider.getWorkflowStatus({ repo: input.repo, workflow: input.workflow, runId: input.runId })));
+  const analysis = CIFailedJobAnalysisResultSchema.parse(await request(() => options.provider.getFailedJobAnalysis({ repo: input.repo, workflow: input.workflow, runId: input.runId })));
   const warnings: Array<{ code: string; message: string }> = [];
   const provenance: ForensicsProvenance[] = [
-    provenanceFor("ci-status", status.providerClass, status, false),
-    provenanceFor("ci-analysis", analysis.providerClass, analysis, false),
+    provenanceFor("ci-status", status.providerClass, status, false, "available"),
+    provenanceFor("ci-analysis", analysis.providerClass, analysis, false, "available"),
   ];
   let redactionsApplied = status.redactionsApplied || analysis.redactionsApplied;
   let truncated = status.truncated || analysis.truncated || analysis.data.failedJobs.length > input.maxJobs;
   const ciEvidence: CIFailureAnalysisResult["data"]["ciEvidence"] = [];
   let remediationActions: Array<{ category: string; title: string; steps: readonly string[]; runbook: string }> = [];
-  try {
-    const remediation = CIRemediationPlanResultSchema.parse(await options.provider.getRemediationPlan({ repo: input.repo, workflow: input.workflow, runId: input.runId }));
-    remediationActions = [...remediation.data.actions];
-    provenance.push(provenanceFor("ci-remediation", remediation.providerClass, remediation, false));
-    warnings.push(...safeWarnings(remediation.warnings));
-    redactionsApplied ||= remediation.redactionsApplied;
-    truncated ||= remediation.truncated;
-  } catch {
-    warnings.push({ code: "ci-remediation-unavailable", message: "Remediation plan unavailable" });
-    provenance.push(unavailableProvenance("ci-remediation", "ci"));
+  if (providerRequests < budget.maxProviderRequests) {
+    try {
+      const remediationValue = await request(() => options.provider.getRemediationPlan({ repo: input.repo, workflow: input.workflow, runId: input.runId }));
+      const remediation = CIRemediationPlanResultSchema.parse(remediationValue);
+      remediationActions = [...remediation.data.actions];
+      provenance.push(provenanceFor("ci-remediation", remediation.providerClass, remediation, false, "available"));
+      warnings.push(...safeWarnings(remediation.warnings));
+      redactionsApplied ||= remediation.redactionsApplied;
+      truncated ||= remediation.truncated;
+    } catch (error) {
+      warnings.push({ code: "ci-remediation-unavailable", message: "Remediation plan unavailable" });
+      provenance.push(unavailableProvenance("ci-remediation", "ci", observedAt, reasonForError(error)));
+    }
+  } else {
+    truncated = true;
+    warnings.push({ code: "context-budget-provider-requests", message: "Provider request budget reached before remediation evidence" });
+    provenance.push(unavailableProvenance("ci-remediation", "ci", observedAt, "provider-request-budget"));
   }
 
-  for (const [index, job] of analysis.data.failedJobs.slice(0, input.maxJobs).entries()) {
+  let usedLines = 0;
+  const jobs = analysis.data.failedJobs.slice(0, input.maxJobs).sort(jobOrder);
+  for (const job of jobs) {
+    const evidenceRef = `ci-log-${safeLogical(job.id, "job")}`;
+    if (providerRequests >= budget.maxProviderRequests || usedLines >= budget.maxLines) {
+      truncated = true;
+      provenance.push(unavailableProvenance(evidenceRef, "ci", observedAt, usedLines >= budget.maxLines ? "line-budget" : "provider-request-budget"));
+      continue;
+    }
     try {
-      const log = CILogEvidenceResultSchema.parse(await options.provider.getLogEvidence({
+      const logValue = await request(() => options.provider.getLogEvidence({
         repo: input.repo,
         workflow: input.workflow,
         runId: input.runId,
         jobId: job.id,
-        maxLines: input.maxLogLines,
+        maxLines: Math.min(input.maxLogLines, budget.maxLines - usedLines),
       }));
-      const sanitizedLines = log.data.lines.slice(0, input.maxLogLines).map((line) => ({
+      const log = CILogEvidenceResultSchema.parse(logValue);
+      const sanitizedLines = log.data.lines.slice(0, Math.min(input.maxLogLines, budget.maxLines - usedLines)).map((line) => ({
         sequence: line.sequence,
         text: sanitizeEvidenceText(line.text, 512),
       }));
@@ -85,33 +113,55 @@ export async function assembleFailureAnalysis(options: AssembleFailureAnalysisOp
         jobId: job.id,
         category: job.category,
         available: log.data.available,
-        lines: sanitizedLines,
+        lineCount: sanitizedLines.length,
         sha256: createHash("sha256").update(sanitizedLines.map((line) => line.text).join("\n"), "utf8").digest("hex"),
+        evidenceRef,
       });
-      provenance.push(provenanceFor(`ci-log-${index + 1}`, log.providerClass, log, false));
+      usedLines += sanitizedLines.length;
+      provenance.push(provenanceFor(evidenceRef, log.providerClass, log, false, "available"));
       warnings.push(...safeWarnings(log.warnings));
       redactionsApplied ||= log.redactionsApplied || changed;
-      truncated ||= log.truncated || log.data.lines.length > input.maxLogLines;
+      truncated ||= log.truncated || log.data.lines.length > sanitizedLines.length;
     } catch (error) {
       warnings.push({ code: "ci-log-unavailable", message: "CI log evidence unavailable" });
-      provenance.push(unavailableProvenance(`ci-log-${index + 1}`, "ci"));
+      provenance.push(unavailableProvenance(evidenceRef, "ci", observedAt, reasonForError(error)));
     }
   }
 
-  const scm = await collectSCM(options.evidence?.scm, input, status.data.run.sha, clock(), input.maxChanges, input.maxHunkLines, warnings);
-  const telemetry = await collectTelemetry(options.evidence?.telemetry, input, clock(), input.maxSignals, warnings);
+  const scm = providerRequests < budget.maxProviderRequests
+    ? await collectSCM(options.evidence?.scm, input, status.data.run.sha, observedAt, Math.min(input.maxChanges, budget.maxFiles), input.maxHunkLines, budget.maxHunks, budget.maxLines - usedLines, warnings, request)
+    : unavailableSCM(observedAt, "provider-request-budget", warnings);
+  usedLines += scm.usedLines;
+  const telemetry = providerRequests < budget.maxProviderRequests
+    ? await collectTelemetry(options.evidence?.telemetry, input, observedAt, input.maxSignals, budget.timeWindow, warnings, request)
+    : unavailableTelemetry(observedAt, "provider-request-budget", warnings);
   provenance.push(scm.provenance, telemetry.provenance);
   redactionsApplied ||= scm.redactionsApplied || telemetry.redactionsApplied;
   truncated ||= scm.truncated || telemetry.truncated;
 
-  const classifications = classifyJobs(analysis.data.failedJobs.slice(0, input.maxJobs));
-  const observedFacts = factsFor(status, analysis.data.failedJobs, scm.changes.length, telemetry.signals.length);
-  const correlations = correlationsFor(scm.changes.length, telemetry.signals);
-  const likelyLocations = locationsFor(scm.changes);
+  let evidence = fitEvidenceBudget({ ciEvidence, scmChanges: scm.changes, telemetrySignals: telemetry.signals }, budget.maxBytes);
+  if (evidence.truncated) {
+    truncated = true;
+    warnings.push({ code: "context-budget-bytes", message: "Evidence was compacted to the byte budget" });
+  }
+  const classifications = classifyJobs(jobs);
+  const observedFacts = factsFor(status, analysis.data.failedJobs, evidence.scmChanges.length, evidence.telemetrySignals.length);
+  const correlations = correlationsFor(evidence.scmChanges, evidence.telemetrySignals);
+  const likelyLocations = locationsFor(evidence.scmChanges, (classifications[0]?.category ?? "unknown") as CICategory);
   const suggestions = suggestionsFor(remediationActions);
+  const budgetUsage: ForensicsContextBudgetUsage = {
+    ...budget,
+    usedFiles: evidence.scmChanges.length,
+    usedHunks: evidence.scmChanges.reduce((total, change) => total + change.hunks.length, 0),
+    usedLines: evidence.ciEvidence.reduce((total, item) => total + item.lineCount, 0) + evidence.scmChanges.reduce((total, change) => total + change.hunks.reduce((hunks, hunk) => hunks + hunk.lines.length, 0), 0),
+    usedBytes: byteLength({ ciEvidence: evidence.ciEvidence, scmChanges: evidence.scmChanges, telemetrySignals: evidence.telemetrySignals }),
+    usedProviderRequests: providerRequests,
+  };
+  const evidenceDigest = digest({ observedFacts, ...evidence, classifications, correlations, likelyLocations, suggestions });
+  const sortedProvenance = provenance.sort((left, right) => left.source.localeCompare(right.source));
   const result = {
     schemaVersion: "1.0" as const,
-    observedAt: clock().toISOString(),
+    observedAt,
     providerClass: safeLogical(status.providerClass, "unknown-provider") as CIProviderClass,
     freshness: status.freshness,
     truncated,
@@ -125,6 +175,8 @@ export async function assembleFailureAnalysis(options: AssembleFailureAnalysisOp
         runAttempt: status.data.run.runAttempt,
         headSha: status.data.run.sha,
       },
+      budget: budgetUsage,
+      evidenceDigest,
       run: {
         status: status.data.run.status,
         conclusion: status.data.run.conclusion,
@@ -132,14 +184,14 @@ export async function assembleFailureAnalysis(options: AssembleFailureAnalysisOp
         updatedAt: status.data.run.updatedAt,
       },
       observedFacts,
-      ciEvidence,
-      scmChanges: scm.changes,
-      telemetrySignals: telemetry.signals,
+      ciEvidence: evidence.ciEvidence,
+      scmChanges: evidence.scmChanges,
+      telemetrySignals: evidence.telemetrySignals,
       classifications,
       correlations,
       likelyLocations,
       suggestions,
-      provenance: provenance.slice(0, 8),
+      provenance: sortedProvenance.slice(0, 20),
     },
   };
   return CIFailureAnalysisResultSchema.parse(result);
@@ -168,6 +220,8 @@ export function makeUnavailableFailureAnalysis(options: {
         { id: "ci-conclusion", source: "ci", subject: "workflow.conclusion", value: options.run.conclusion ?? "unknown", evidenceRefs: [] },
         { id: "ci-analysis-status", source: "ci", subject: "analysis.status", value: code, evidenceRefs: [] },
       ],
+      budget: unavailableBudget(options.observedAt),
+      evidenceDigest: digest({ code, run: options.run }),
       ciEvidence: [],
       scmChanges: [],
       telemetrySignals: [],
@@ -175,7 +229,7 @@ export function makeUnavailableFailureAnalysis(options: {
       correlations: [],
       likelyLocations: [],
       suggestions: [],
-      provenance: [{ source: "ci-analysis", provider, observedAt: options.observedAt.toISOString(), freshness: "unknown", truncated: false, unavailable: true, redactionsApplied: false, warnings: [{ code, message: "Evidence source unavailable" }] }],
+      provenance: [{ source: "ci-analysis", provider, observedAt: options.observedAt.toISOString(), freshness: "unknown", truncated: false, unavailable: true, redactionsApplied: false, reason: code, warnings: [{ code, message: "Evidence source unavailable" }] }],
     },
   });
 }
@@ -245,81 +299,236 @@ export function buildAgentNotificationPayload(options: {
   return minimal;
 }
 
-function collectSCM(provider: SCMChangeEvidenceProvider | undefined, input: CIFailureAnalysisInput, headSha: string, _observedAt: Date, maxChanges: number, maxHunkLines: number, warnings: Array<{ code: string; message: string }>) {
-  if (provider === undefined) {
-    warnings.push({ code: "scm-unavailable", message: "SCM change evidence unavailable" });
-    return { changes: [], truncated: false, redactionsApplied: false, provenance: unavailableProvenance("scm", "unconfigured", _observedAt.toISOString()) };
-  }
-  return provider.getChangeEvidence(SCMChangeEvidenceInputSchema.parse({ repo: input.repo, workflow: input.workflow, runId: input.runId, headSha, maxChanges, maxHunkLines }))
-    .then((value) => {
-      const result = SCMChangeEvidenceResultSchema.parse(value);
-      warnings.push(...safeWarnings(result.warnings));
-      if (!result.data.available) {
-        warnings.push({ code: "scm-unavailable", message: "SCM change evidence unavailable" });
-        return { changes: [], truncated: result.truncated, redactionsApplied: result.redactionsApplied, provenance: provenanceFor("scm", result.providerClass, result, true) };
-      }
-      const changes = result.data.changes.slice(0, maxChanges).map((change) => SCMChangeSchema.parse({
+async function collectSCM(
+  provider: SCMChangeEvidenceProvider | undefined,
+  input: CIFailureAnalysisInput,
+  headSha: string,
+  observedAt: string,
+  maxChanges: number,
+  maxHunkLines: number,
+  maxHunks: number,
+  maxLines: number,
+  warnings: Array<{ code: string; message: string }>,
+  request: <T>(operation: () => Promise<T>) => Promise<T | undefined>,
+) {
+  if (provider === undefined) return unavailableSCM(observedAt, "unconfigured", warnings);
+  try {
+    const value = await request(() => provider.getChangeEvidence(SCMChangeEvidenceInputSchema.parse({ repo: input.repo, workflow: input.workflow, runId: input.runId, headSha, maxChanges, maxHunkLines })));
+    const parsed = SCMChangeEvidenceResultSchema.safeParse(value);
+    if (!parsed.success) return unavailableSCM(observedAt, "malformed-provider-response", warnings);
+    const result = parsed.data;
+    warnings.push(...safeWarnings(result.warnings));
+    if (!result.data.available) {
+      const reason = `${safeLogical(result.data.unavailable.code, "unavailable")}: ${sanitizeEvidenceText(result.data.unavailable.message, 448)}`;
+      return { ...unavailableSCM(observedAt, reason, warnings), redactionsApplied: result.redactionsApplied, provenance: provenanceFor("scm", result.providerClass, result, true, reason) };
+    }
+    let remainingHunks = maxHunks;
+    let remainingLines = Math.max(0, maxLines);
+    const selected = [...result.data.changes].sort(changeOrder).slice(0, maxChanges);
+    const changes = selected.map((change) => {
+      const hunks = change.hunks.slice().sort(hunkOrder).slice(0, remainingHunks).map((hunk) => {
+        const lines = hunk.lines.slice(0, Math.min(maxHunkLines, remainingLines)).map((line) => sanitizeEvidenceText(line, 512));
+        remainingLines -= lines.length;
+        remainingHunks -= 1;
+        return { header: sanitizeEvidenceText(hunk.header, 256), lines };
+      });
+      return SCMChangeSchema.parse({
         ...change,
         path: sanitizeEvidenceText(change.path, 512),
-        hunks: change.hunks.slice(0, 20).map((hunk) => ({
-          header: sanitizeEvidenceText(hunk.header, 256),
-          lines: hunk.lines.slice(0, maxHunkLines).map((line) => sanitizeEvidenceText(line, 512)),
-        })),
-      }));
-      return {
-        changes,
-        truncated: result.truncated || result.data.changes.length > maxChanges,
-        redactionsApplied: result.redactionsApplied || JSON.stringify(changes) !== JSON.stringify(result.data.changes.slice(0, maxChanges)),
-        provenance: provenanceFor("scm", result.providerClass, result, false),
-      };
-    })
-    .catch(() => {
-      warnings.push({ code: "scm-unavailable", message: "SCM change evidence unavailable" });
-      return { changes: [], truncated: false, redactionsApplied: false, provenance: unavailableProvenance("scm", "scm", _observedAt.toISOString()) };
-    });
+        hunks,
+      });
+    }).filter((change) => change.hunks.length > 0 || selected.length <= maxChanges);
+    return {
+      changes,
+      usedHunks: changes.reduce((total, change) => total + change.hunks.length, 0),
+      usedLines: changes.reduce((total, change) => total + change.hunks.reduce((lines, hunk) => lines + hunk.lines.length, 0), 0),
+      truncated: result.truncated || result.data.changes.length > maxChanges || changes.length < selected.length,
+      redactionsApplied: result.redactionsApplied || changes.length < result.data.changes.length,
+      provenance: provenanceFor("scm", result.providerClass, result, false, "available"),
+    };
+  } catch {
+    return unavailableSCM(observedAt, "provider-request-failed", warnings);
+  }
 }
 
-function collectTelemetry(provider: TelemetryCorrelationProvider | undefined, input: CIFailureAnalysisInput, _observedAt: Date, maxSignals: number, warnings: Array<{ code: string; message: string }>) {
-  if (provider === undefined) {
-    warnings.push({ code: "telemetry-unavailable", message: "Telemetry correlation unavailable" });
-    return { signals: [], truncated: false, redactionsApplied: false, provenance: unavailableProvenance("telemetry", "unconfigured", _observedAt.toISOString()) };
+async function collectTelemetry(
+  provider: TelemetryCorrelationProvider | undefined,
+  input: CIFailureAnalysisInput,
+  observedAt: string,
+  maxSignals: number,
+  timeWindow: ForensicsContextBudget["timeWindow"],
+  warnings: Array<{ code: string; message: string }>,
+  request: <T>(operation: () => Promise<T>) => Promise<T | undefined>,
+) {
+  if (provider === undefined) return unavailableTelemetry(observedAt, "unconfigured", warnings);
+  try {
+    const value = await request(() => provider.getTelemetryCorrelation(TelemetryCorrelationInputSchema.parse({ repo: input.repo, workflow: input.workflow, runId: input.runId, signalIds: [], maxSignals })));
+    const parsed = TelemetryCorrelationResultSchema.safeParse(value);
+    if (!parsed.success) return unavailableTelemetry(observedAt, "malformed-provider-response", warnings);
+    const result = parsed.data;
+    warnings.push(...safeWarnings(result.warnings));
+    if (!result.data.available) {
+      const reason = `${safeLogical(result.data.unavailable.code, "unavailable")}: ${sanitizeEvidenceText(result.data.unavailable.message, 448)}`;
+      return { ...unavailableTelemetry(observedAt, reason, warnings), redactionsApplied: result.redactionsApplied, provenance: provenanceFor("telemetry", result.providerClass, result, true, reason) };
+    }
+    const inWindow = result.data.signals.filter((signal) => Date.parse(signal.observedAt) >= Date.parse(timeWindow.from) && Date.parse(signal.observedAt) <= Date.parse(timeWindow.to));
+    const signals = inWindow.slice().sort(signalOrder).slice(0, maxSignals).map((signal) => TelemetrySignalSchema.parse({
+      ...signal,
+      id: safeLogical(signal.id, "signal"),
+      summary: signal.kind === "log" ? "Log evidence reference available" : signal.kind === "trace" ? "Trace evidence reference available" : sanitizeEvidenceText(signal.summary, 512),
+      ...(signal.reference === undefined ? {} : { reference: safeLogical(signal.reference, "reference") }),
+    }));
+    return { signals, truncated: result.truncated || inWindow.length > maxSignals || inWindow.length !== result.data.signals.length, redactionsApplied: result.redactionsApplied, provenance: provenanceFor("telemetry", result.providerClass, result, false, "available") };
+  } catch {
+    return unavailableTelemetry(observedAt, "provider-request-failed", warnings);
   }
-  return provider.getTelemetryCorrelation(TelemetryCorrelationInputSchema.parse({ repo: input.repo, workflow: input.workflow, runId: input.runId, signalIds: [], maxSignals }))
-    .then((value) => {
-      const result = TelemetryCorrelationResultSchema.parse(value);
-      warnings.push(...safeWarnings(result.warnings));
-      if (!result.data.available) {
-        warnings.push({ code: "telemetry-unavailable", message: "Telemetry correlation unavailable" });
-        return { signals: [], truncated: result.truncated, redactionsApplied: result.redactionsApplied, provenance: provenanceFor("telemetry", result.providerClass, result, true) };
-      }
-      const signals = result.data.signals.slice(0, maxSignals).map((signal) => TelemetrySignalSchema.parse({
-        ...signal,
-        id: safeLogical(signal.id, "signal"),
-        summary: sanitizeEvidenceText(signal.summary, 512),
-      }));
-      return { signals, truncated: result.truncated || result.data.signals.length > maxSignals, redactionsApplied: result.redactionsApplied, provenance: provenanceFor("telemetry", result.providerClass, result, false) };
-    })
-    .catch(() => {
-      warnings.push({ code: "telemetry-unavailable", message: "Telemetry correlation unavailable" });
-      return { signals: [], truncated: false, redactionsApplied: false, provenance: unavailableProvenance("telemetry", "telemetry", _observedAt.toISOString()) };
-    });
+}
+
+function contextBudgetFor(input: CIFailureAnalysisInput, now: Date): ForensicsContextBudget {
+  if (input.budget !== undefined) return ForensicsContextBudgetSchema.parse(input.budget);
+  const to = now.toISOString();
+  const from = new Date(now.getTime() - 24 * 60 * 60 * 1_000).toISOString();
+  return ForensicsContextBudgetSchema.parse({
+    maxFiles: input.maxChanges,
+    maxHunks: Math.min(100, input.maxChanges * 2),
+    maxLines: Math.min(200, input.maxLogLines + input.maxHunkLines),
+    maxBytes: 64 * 1_024,
+    maxProviderRequests: 16,
+    timeWindow: { from, to },
+  });
+}
+
+function unavailableBudget(observedAt: Date): ForensicsContextBudgetUsage {
+  const now = observedAt;
+  const budget = contextBudgetFor({
+    repo: "owner/repo",
+    workflow: "unknown",
+    runId: "unavailable",
+    maxJobs: 1,
+    maxLogLines: 1,
+    maxChanges: 1,
+    maxHunkLines: 1,
+    maxSignals: 1,
+  }, now);
+  return { ...budget, usedFiles: 0, usedHunks: 0, usedLines: 0, usedBytes: 0, usedProviderRequests: 0 };
+}
+
+type EvidenceCollections = {
+  ciEvidence: CIFailureAnalysisResult["data"]["ciEvidence"];
+  scmChanges: CIFailureAnalysisResult["data"]["scmChanges"];
+  telemetrySignals: CIFailureAnalysisResult["data"]["telemetrySignals"];
+};
+
+function fitEvidenceBudget(collections: EvidenceCollections, maxBytes: number): EvidenceCollections & { truncated: boolean } {
+  const result: EvidenceCollections = {
+    ciEvidence: [...collections.ciEvidence].sort((left, right) => left.evidenceRef.localeCompare(right.evidenceRef)),
+    scmChanges: [...collections.scmChanges].sort(changeOrder),
+    telemetrySignals: [...collections.telemetrySignals].sort(signalOrder),
+  };
+  let truncated = false;
+  while (byteLength(result) > maxBytes) {
+    truncated = true;
+    const lastChange = result.scmChanges.at(-1);
+    const lastHunk = lastChange?.hunks.at(-1);
+    if (lastHunk !== undefined && lastHunk.lines.length > 0) {
+      lastHunk.lines = lastHunk.lines.slice(0, -1);
+      continue;
+    }
+    if (lastChange !== undefined && lastChange.hunks.length > 0) {
+      lastChange.hunks = lastChange.hunks.slice(0, -1);
+      continue;
+    }
+    if (lastChange !== undefined) {
+      result.scmChanges.pop();
+      continue;
+    }
+    if (result.telemetrySignals.length > 0) {
+      result.telemetrySignals.pop();
+      continue;
+    }
+    if (result.ciEvidence.length > 0) {
+      result.ciEvidence.pop();
+      continue;
+    }
+    break;
+  }
+  return { ...result, truncated };
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalize(value)), "utf8").digest("hex");
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalize(item)]));
+  }
+  return value;
+}
+
+function jobOrder(left: CIJob, right: CIJob): number {
+  return left.id.localeCompare(right.id) || left.name.localeCompare(right.name);
+}
+
+function changeOrder(left: z.infer<typeof SCMChangeSchema>, right: z.infer<typeof SCMChangeSchema>): number {
+  return left.path.localeCompare(right.path)
+    || left.changeType.localeCompare(right.changeType)
+    || right.additions - left.additions
+    || right.deletions - left.deletions
+    || right.hunks.length - left.hunks.length
+    || JSON.stringify(left).localeCompare(JSON.stringify(right));
+}
+
+function hunkOrder(left: { header: string }, right: { header: string }): number {
+  return left.header.localeCompare(right.header);
+}
+
+function signalOrder(left: z.infer<typeof TelemetrySignalSchema>, right: z.infer<typeof TelemetrySignalSchema>): number {
+  return signalKindRank(left.kind) - signalKindRank(right.kind)
+    || left.id.localeCompare(right.id)
+    || (left.reference ?? "").localeCompare(right.reference ?? "")
+    || left.observedAt.localeCompare(right.observedAt)
+    || left.summary.localeCompare(right.summary);
+}
+
+function signalKindRank(kind: z.infer<typeof TelemetrySignalSchema>["kind"]): number {
+  return ({ metric: 0, alert: 1, log: 2, trace: 3 } as const)[kind];
+}
+
+function scmChangeRef(path: string): string {
+  return `scm-change-${safeLogical(path, "path")}`;
+}
+
+function reasonForError(error: unknown): string {
+  return error instanceof z.ZodError ? "malformed-provider-response" : "provider-request-failed";
+}
+
+function unavailableSCM(observedAt: string, reason: string, warnings: Array<{ code: string; message: string }>) {
+  warnings.push({ code: "scm-unavailable", message: "SCM change evidence unavailable" });
+  return { changes: [], usedHunks: 0, usedLines: 0, truncated: false, redactionsApplied: false, provenance: unavailableProvenance("scm", "unknown-provider", observedAt, reason) };
+}
+
+function unavailableTelemetry(observedAt: string, reason: string, warnings: Array<{ code: string; message: string }>) {
+  warnings.push({ code: "telemetry-unavailable", message: "Telemetry correlation unavailable" });
+  return { signals: [], truncated: false, redactionsApplied: false, provenance: unavailableProvenance("telemetry", "unknown-provider", observedAt, reason) };
 }
 
 function classifyJobs(jobs: readonly CIJob[]) {
   const byCategory = new Map<string, { basis: string[]; refs: string[] }>();
-  jobs.forEach((job, index) => {
+  [...jobs].sort(jobOrder).forEach((job) => {
     const category = classifyFailure(job.category, job.name, ...job.failedSteps);
     const current = byCategory.get(category) ?? { basis: [], refs: [] };
     current.basis.push(sanitizeEvidenceText(job.name, 256));
-    current.refs.push(`ci-job-${index + 1}`);
+    current.refs.push(`ci-job-${safeLogical(job.id, "job")}`);
     byCategory.set(category, current);
   });
   if (byCategory.size === 0) return [{ category: "unknown" as const, confidence: 0, basis: ["No failed job classification was available"], evidenceRefs: [] }];
-  return [...byCategory.entries()].slice(0, 10).map(([category, value]) => ({
+  return [...byCategory.entries()].sort(([left], [right]) => left.localeCompare(right)).slice(0, 10).map(([category, value]) => ({
     category,
     confidence: category === "unknown" ? 0 : 1,
-    basis: value.basis.slice(0, 8),
-    evidenceRefs: value.refs.slice(0, 10),
+    basis: value.basis.sort((left, right) => left.localeCompare(right)).slice(0, 8),
+    evidenceRefs: value.refs.sort((left, right) => left.localeCompare(right)).slice(0, 10),
   }));
 }
 
@@ -333,35 +542,47 @@ function factsFor(status: z.infer<typeof CIWorkflowStatusResultSchema>, jobs: re
   ];
 }
 
-function correlationsFor(changeCount: number, signals: readonly z.infer<typeof TelemetrySignalSchema>[]) {
-  const correlations: Array<{ source: string; kind: string; summary: string; confidence: number; evidenceRefs: string[] }> = [];
-  if (changeCount > 0) correlations.push({ source: "scm", kind: "scm-ci", summary: "Bounded SCM changes are associated with the failed run", confidence: 0.65, evidenceRefs: ["scm"] });
-  for (const signal of signals.filter((item) => item.state === "degraded" || item.state === "error")) {
-    correlations.push({ source: "telemetry", kind: "ci-telemetry", summary: sanitizeEvidenceText(signal.summary, 512), confidence: 0.7, evidenceRefs: [`telemetry-${safeLogical(signal.id, "signal")}`] });
+function correlationsFor(changes: readonly z.infer<typeof SCMChangeSchema>[], signals: readonly z.infer<typeof TelemetrySignalSchema>[]) {
+  const correlations: Array<{ source: string; kind: string; summary: string; confidence: number; causality: "not-established"; evidenceRefs: string[] }> = [];
+  for (const change of [...changes].sort(changeOrder)) {
+    correlations.push({ source: "scm", kind: "changed-path", summary: `Changed path ${change.path} was observed for the failed run`, confidence: 0.65, causality: "not-established", evidenceRefs: [scmChangeRef(change.path)] });
   }
-  return correlations.slice(0, 20);
+  for (const signal of [...signals].sort(signalOrder).filter((item) => item.state === "degraded" || item.state === "error")) {
+    const kind = signal.kind === "metric" ? "metric" : signal.kind === "alert" ? "active-alert" : signal.kind === "log" ? "log-reference" : "trace-reference";
+    const name = signal.reference ?? signal.id;
+    correlations.push({ source: "telemetry", kind, summary: `${signal.kind} ${name}: ${sanitizeEvidenceText(signal.summary, 448)}`, confidence: 0.7, causality: "not-established", evidenceRefs: [`telemetry-${safeLogical(signal.id, "signal")}`] });
+  }
+  return correlations.slice(0, 20).map((correlation) => ({ ...correlation, causality: "not-established" as const }));
 }
 
-function locationsFor(changes: readonly z.infer<typeof SCMChangeSchema>[]) {
-  const seen = new Set<string>();
-  return changes.flatMap((change, index) => {
-    if (seen.has(change.path)) return [];
-    seen.add(change.path);
-    return [{ path: change.path, confidence: Math.max(0.2, 0.8 - index * 0.05), evidenceRefs: [`scm-change-${index + 1}`] }];
-  }).slice(0, 20);
+function locationsFor(changes: readonly z.infer<typeof SCMChangeSchema>[], category: CICategory) {
+  const byPath = new Map<string, z.infer<typeof SCMChangeSchema>>();
+  for (const change of changes) if (!byPath.has(change.path)) byPath.set(change.path, change);
+  return [...byPath.values()].map((change) => {
+    const score = Math.min(0.95, (change.changeType === "modified" ? 0.75 : 0.65) + (change.hunks.length > 0 ? 0.15 : 0) + Math.min(0.05, (change.additions + change.deletions) / 100));
+    return {
+      path: change.path,
+      category,
+      confidence: score,
+      confidenceClass: score >= 0.75 ? "high" as const : score >= 0.5 ? "medium" as const : "low" as const,
+      uncertainty: "Changed-path evidence does not identify the failure cause",
+      evidenceRefs: [scmChangeRef(change.path)],
+    };
+  }).sort((left, right) => right.confidence - left.confidence || left.path.localeCompare(right.path)).slice(0, 20);
 }
 
 function suggestionsFor(actions: readonly { category: string; title: string; steps: readonly string[]; runbook: string }[]) {
-  return [...new Map(actions.map((action) => [action.category, {
+  return [...new Map([...actions].sort((left, right) => left.category.localeCompare(right.category) || left.title.localeCompare(right.title)).map((action) => [action.category, {
     category: action.category,
     title: sanitizeEvidenceText(action.title, 256),
     steps: action.steps.slice(0, 8).map((step) => sanitizeEvidenceText(step, 512)),
     runbook: action.runbook,
     dryRun: true as const,
+    evidenceRefs: [`classification-${safeLogical(action.category, "unknown")}`],
   }])).values()].slice(0, 8);
 }
 
-function provenanceFor(source: string, provider: string, value: { observedAt: string; freshness: ForensicsFreshness; truncated: boolean; redactionsApplied: boolean; warnings: readonly { code: string; message: string }[] }, unavailable: boolean): ForensicsProvenance {
+function provenanceFor(source: string, provider: string, value: { observedAt: string; freshness: ForensicsFreshness; truncated: boolean; redactionsApplied: boolean; warnings: readonly { code: string; message: string }[] }, unavailable: boolean, reason = unavailable ? "unavailable" : "available"): ForensicsProvenance {
   return {
     source: safeLogical(source, "evidence"),
     provider: safeLogical(provider, "unknown-provider"),
@@ -370,12 +591,13 @@ function provenanceFor(source: string, provider: string, value: { observedAt: st
     truncated: value.truncated,
     unavailable,
     redactionsApplied: value.redactionsApplied,
+    reason: sanitizeEvidenceText(reason, 512),
     warnings: value.warnings.slice(0, 20).map(safeWarning),
   };
 }
 
-function unavailableProvenance(source: string, provider: string, observedAt = new Date(0).toISOString()): ForensicsProvenance {
-  return { source, provider: safeLogical(provider, "unknown-provider"), observedAt, freshness: "unknown", truncated: false, unavailable: true, redactionsApplied: false, warnings: [{ code: "unavailable", message: "Evidence source unavailable" }] };
+function unavailableProvenance(source: string, provider: string, observedAt = new Date(0).toISOString(), reason = "unavailable"): ForensicsProvenance {
+  return { source, provider: safeLogical(provider, "unknown-provider"), observedAt, freshness: "unknown", truncated: false, unavailable: true, redactionsApplied: false, reason: safeLogical(reason, "unavailable"), warnings: [{ code: "unavailable", message: "Evidence source unavailable" }] };
 }
 
 function safeWarnings(warnings: readonly { code: string; message: string }[]) {
@@ -405,20 +627,25 @@ function notificationOutcome(conclusion: string | null): AgentNotificationPayloa
 
 function compactAnalysis(analysis: CIFailureAnalysisResult, minimal = false): CIFailureAnalysisResult {
   const data = analysis.data;
+  const compactedData = {
+    ...data,
+    observedFacts: data.observedFacts.slice(0, minimal ? 1 : 5),
+    ciEvidence: minimal ? [] : data.ciEvidence.slice(0, 2),
+    scmChanges: minimal ? [] : data.scmChanges.slice(0, 3).map((change) => ({ ...change, hunks: change.hunks.slice(0, 1).map((hunk) => ({ ...hunk, lines: hunk.lines.slice(0, 2) })) })),
+    telemetrySignals: minimal ? [] : data.telemetrySignals.slice(0, 3),
+    classifications: data.classifications.slice(0, minimal ? 1 : 3),
+    correlations: minimal ? [] : data.correlations.slice(0, 3),
+    likelyLocations: minimal ? [] : data.likelyLocations.slice(0, 4),
+    suggestions: minimal ? [] : data.suggestions.slice(0, 1).map((suggestion) => ({ ...suggestion, steps: suggestion.steps.slice(0, 1) })),
+    provenance: data.provenance.slice(0, minimal ? 1 : 5),
+  };
+  const { evidenceDigest: _previousDigest, ...digestData } = compactedData;
   return CIFailureAnalysisResultSchema.parse({
     ...analysis,
     truncated: true,
     data: {
-      ...data,
-      observedFacts: data.observedFacts.slice(0, minimal ? 1 : 5),
-      ciEvidence: minimal ? [] : data.ciEvidence.slice(0, 2).map((entry) => ({ ...entry, lines: entry.lines.slice(0, 2) })),
-      scmChanges: minimal ? [] : data.scmChanges.slice(0, 3).map((change) => ({ ...change, hunks: change.hunks.slice(0, 1).map((hunk) => ({ ...hunk, lines: hunk.lines.slice(0, 2) })) })),
-      telemetrySignals: minimal ? [] : data.telemetrySignals.slice(0, 3),
-      classifications: data.classifications.slice(0, minimal ? 1 : 3),
-      correlations: data.correlations.slice(0, minimal ? 1 : 3),
-      likelyLocations: data.likelyLocations.slice(0, minimal ? 1 : 4),
-      suggestions: minimal ? [] : data.suggestions.slice(0, 1).map((suggestion) => ({ ...suggestion, steps: suggestion.steps.slice(0, 1) })),
-      provenance: data.provenance.slice(0, minimal ? 1 : 5),
+      ...compactedData,
+      evidenceDigest: digest(digestData),
     },
   });
 }

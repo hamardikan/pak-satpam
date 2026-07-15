@@ -7,6 +7,35 @@ export const FORENSICS_SCHEMA_VERSION = CI_SCHEMA_VERSION;
 export const ForensicsFreshnessSchema = z.enum(["fresh", "cached", "stale", "unknown"]);
 export type ForensicsFreshness = z.infer<typeof ForensicsFreshnessSchema>;
 
+export const ForensicsTimeWindowSchema = z.object({
+  from: UtcTimestampSchema,
+  to: UtcTimestampSchema,
+}).strict().superRefine((value, context) => {
+  const durationMs = Date.parse(value.to) - Date.parse(value.from);
+  if (durationMs <= 0 || durationMs > 24 * 60 * 60 * 1_000) {
+    context.addIssue({ code: "custom", message: "time window must be greater than zero and no more than 24 hours" });
+  }
+});
+
+export const ForensicsContextBudgetSchema = z.object({
+  maxFiles: z.number().int().min(1).max(25),
+  maxHunks: z.number().int().min(1).max(100),
+  maxLines: z.number().int().min(1).max(200),
+  maxBytes: z.number().int().min(1_024).max(256 * 1_024),
+  maxProviderRequests: z.number().int().min(2).max(32),
+  timeWindow: ForensicsTimeWindowSchema,
+}).strict();
+export type ForensicsContextBudget = z.infer<typeof ForensicsContextBudgetSchema>;
+
+export const ForensicsContextBudgetUsageSchema = ForensicsContextBudgetSchema.extend({
+  usedFiles: z.number().int().nonnegative(),
+  usedHunks: z.number().int().nonnegative(),
+  usedLines: z.number().int().nonnegative(),
+  usedBytes: z.number().int().nonnegative(),
+  usedProviderRequests: z.number().int().nonnegative(),
+}).strict();
+export type ForensicsContextBudgetUsage = z.infer<typeof ForensicsContextBudgetUsageSchema>;
+
 const ForensicsWarningSchema = z.object({
   code: LogicalIdSchema,
   message: BoundedTextSchema.max(512),
@@ -20,6 +49,7 @@ export const ForensicsProvenanceSchema = z.object({
   truncated: z.boolean(),
   unavailable: z.boolean(),
   redactionsApplied: z.boolean(),
+  reason: BoundedTextSchema.max(512),
   warnings: z.array(ForensicsWarningSchema).max(20),
 }).strict();
 export type ForensicsProvenance = z.infer<typeof ForensicsProvenanceSchema>;
@@ -78,9 +108,10 @@ export type TelemetryCorrelationInput = z.infer<typeof TelemetryCorrelationInput
 
 export const TelemetrySignalSchema = z.object({
   id: LogicalIdSchema,
-  kind: z.enum(["metric", "log", "trace"]),
+  kind: z.enum(["metric", "alert", "log", "trace"]),
   state: z.enum(["normal", "degraded", "error", "unknown"]),
   summary: BoundedTextSchema.max(512),
+  reference: LogicalIdSchema.optional(),
   observedAt: UtcTimestampSchema,
 }).strict();
 const TelemetryCorrelationDataSchema = z.discriminatedUnion("available", [
@@ -112,6 +143,7 @@ export const CIFailureAnalysisInputSchema = z.object({
   maxChanges: z.number().int().min(1).max(25).default(10),
   maxHunkLines: z.number().int().min(1).max(40).default(12),
   maxSignals: z.number().int().min(1).max(20).default(10),
+  budget: ForensicsContextBudgetSchema.optional(),
 }).strict();
 export type CIFailureAnalysisInput = z.infer<typeof CIFailureAnalysisInputSchema>;
 
@@ -143,12 +175,16 @@ const CorrelationSchema = z.object({
   kind: LogicalIdSchema,
   summary: BoundedTextSchema.max(512),
   confidence: z.number().min(0).max(1),
+  causality: z.literal("not-established"),
   evidenceRefs: z.array(LogicalIdSchema).max(10),
 }).strict();
 
 const LikelyLocationSchema = z.object({
   path: SCMPathSchema,
+  category: CICategorySchema,
   confidence: z.number().min(0).max(1),
+  confidenceClass: z.enum(["high", "medium", "low", "unknown"]),
+  uncertainty: BoundedTextSchema.max(512),
   evidenceRefs: z.array(LogicalIdSchema).max(10),
 }).strict();
 
@@ -158,14 +194,16 @@ const SuggestionSchema = z.object({
   steps: z.array(BoundedTextSchema.max(512)).min(1).max(8),
   runbook: z.string().regex(/^docs\/ci-cd-runbook\.md#[a-z0-9-]+$/),
   dryRun: z.literal(true),
+  evidenceRefs: z.array(LogicalIdSchema).max(10),
 }).strict();
 
 const SanitizedLogEvidenceSchema = z.object({
   jobId: CIJobIdSchema,
   category: CICategorySchema,
   available: z.boolean(),
-  lines: z.array(z.object({ sequence: z.number().int().min(1).max(20_000), text: BoundedTextSchema.max(512) }).strict()).max(20),
+  lineCount: z.number().int().min(0).max(20_000),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  evidenceRef: LogicalIdSchema,
 }).strict();
 
 export const CIFailureAnalysisResultSchema = z.object({
@@ -178,6 +216,8 @@ export const CIFailureAnalysisResultSchema = z.object({
   warnings: z.array(ForensicsWarningSchema).max(20),
   data: z.object({
     subject: FailureSubjectSchema,
+    budget: ForensicsContextBudgetUsageSchema,
+    evidenceDigest: z.string().regex(/^[a-f0-9]{64}$/),
     run: z.object({
       status: z.enum(["queued", "in_progress", "completed"]),
       conclusion: z.string().max(64).nullable(),
@@ -192,7 +232,7 @@ export const CIFailureAnalysisResultSchema = z.object({
     correlations: z.array(CorrelationSchema).max(20),
     likelyLocations: z.array(LikelyLocationSchema).max(20),
     suggestions: z.array(SuggestionSchema).max(8),
-    provenance: z.array(ForensicsProvenanceSchema).max(8),
+    provenance: z.array(ForensicsProvenanceSchema).max(20),
   }).strict(),
 }).strict();
 export type CIFailureAnalysisResult = z.infer<typeof CIFailureAnalysisResultSchema>;
