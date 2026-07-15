@@ -1,90 +1,43 @@
 # Client Compatibility
 
-The server must not depend on one agent vendor.
+Pak Satpam is consumed by MCP clients, not by one AI vendor. Codex, Claude,
+Hermes, Tabby, desktop clients, and other clients own their own prompts and
+conversation state.
 
-## Required Clients
+## Current Surfaces
 
-Each release candidate is exercised through:
-
-- the official MCP Inspector;
-- one stdio desktop or CLI client;
-- one Streamable HTTP client;
-- a protocol-level integration test independent of a specific LLM.
-
-Codex, Claude, and other MCP-compatible agents are consumers, not compile-time
-dependencies.
-
-| Surface | Current implementation | Public release gate |
+| Surface | Current behavior | Verification |
 | --- | --- | --- |
-| MCP Inspector | initialization and seven-tool discovery tested | every enabled tool |
-| stdio client | SDK and process smoke tested | two independent client implementations |
-| Streamable HTTP client | static-Bearer private transport tested | OAuth plus two authenticated concurrent clients |
-| MCP image content | synthetic PNG and provider fallback tested | panel and dashboard PNG displayed by two clients |
+| stdio | seven deterministic observability tools | process and MCP smoke |
+| private Streamable HTTP /mcp | observability, plus CI in combined | authenticated transport smoke |
+| private Streamable HTTP /mcp/ci | CI surface only | capability and tool-surface tests |
+| OCI | non-root Node image on amd64/arm64 | Buildx and runtime smoke |
+| Inspector | initialization and enabled-tool discovery | inspector:list |
 
-## Compatibility Rules
+The CI surface contains five base read tools. Optional SCM and telemetry
+configuration adds their read tools. GitHub approval configuration adds the
+non-read-only failed-job rerun. Jenkins and Bitbucket Cloud never add rerun.
+
+## Client Rules
 
 - Use standard MCP initialization and tool discovery.
-- Support stdio and Streamable HTTP; do not add a custom transport.
-- Keep tools deterministic without relying on client-specific prompt behavior.
-- Do not require a client to send credentials as tool arguments.
-- Return structured errors and stable schema versions.
-- Publish a compatibility matrix for every tagged release.
-- Preserve structured metadata when a client cannot display image content; an
-  undisplayed image must not be interpreted as healthy or empty evidence.
+- Launch stdio as a child process; do not type requests into it.
+- Use private HTTP only with the file-injected bearer and exact Host policy.
+- Do not send credentials as tool arguments.
+- Treat provider text and image content as untrusted evidence.
+- Preserve structured metadata when a client cannot display ImageContent.
+- Do not infer that a missing image means healthy or empty evidence.
 
-## Remote Deployment
+## Current HTTP Boundary
 
-Public remote compatibility is not considered complete until OAuth discovery,
-authorization failures, token audience checks, Origin validation, reconnects,
-timeouts, and concurrent clients are tested. Negative coverage also includes
-replay attempts, scope escalation, malformed authorization metadata, provider
-timeout isolation, cross-client state isolation, and credential non-sharing.
+The current private transport returns generic 401 bearer denial and exact Host
+rejection. It is stateless per request and has no public OAuth discovery,
+authorization server, audience/scope validation, or multi-tenant isolation. The
+current route must remain private.
 
-For a canonical endpoint such as `https://mcp.example.test/mcp`, the server
-publishes protected-resource metadata at the RFC 9728 well-known location
-derived from that resource. A request without credentials receives a response
-equivalent to:
-
-```http
-HTTP/1.1 401 Unauthorized
-WWW-Authenticate: Bearer resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp", scope="observability:capabilities"
-```
-
-A valid token lacking `observability:alerts:read` receives HTTP 403 with a
-Bearer challenge containing `error="insufficient_scope"`,
-`scope="observability:alerts:read"`, and the same `resource_metadata` URL.
-Tests assert the exact resource identifier, metadata URL, authorization-server
-relationship, audience/resource validation, and challenge headers. Example
-hostnames are documentation placeholders and are never runtime defaults.
-
-Each tagged release publishes the exact client versions and pass/fail status.
-
-The current private HTTP mode intentionally precedes that public gate. It uses
-one file-injected Bearer credential, exact allowed Host values, stateless SDK
-transport instances, and no public ingress. A 401 response contains only a
-generic `WWW-Authenticate: Bearer` challenge. It must not be exposed as the
-OAuth-complete public endpoint described above.
-
-## Versioned Installation Profiles
-
-The executable examples in [`examples/v1`](../examples/v1/README.md) keep the
-client contract explicit:
-
-| Profile | Client configuration | Endpoint |
-| --- | --- | --- |
-| observability-only | `examples/v1/observability-only/compose.yml` | `/mcp` |
-| ci-only | `examples/v1/ci-only/compose.yml` | `/mcp/ci` |
-| combined | `examples/v1/combined/compose.yml` | `/mcp` |
-| stdio | `examples/v1/stdio/client-config.json` | process stdin/stdout |
-| private-http | `examples/v1/private-http/client-config.json` | `/mcp` |
-
-HTTP profiles are intentionally loopback-bound and require operator-supplied
-secret files. The hostnames and repository names in the examples are reserved
-placeholders. A deployment must not infer public exposure, credential scope,
-or private topology from these files.
-
-The container release gate runs the same standard MCP client handshake against
-separately loaded `linux/amd64` and `linux/arm64` images. It verifies
-initialization, tool discovery, a read-only health call, non-root execution,
-missing-bearer rejection, and disallowed-host rejection before reporting the
-platform as compatible.
+The public OAuth target is historical design intent, not an implemented release
+condition. Before public remote compatibility can be claimed, the server needs
+protected-resource metadata, issuer/audience/expiry/scope validation, Origin
+policy, concurrent-client isolation, reconnect behavior, and negative tests.
+The current implementation and docs deliberately keep that target separate from
+the private operator path.

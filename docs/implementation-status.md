@@ -1,88 +1,81 @@
 # Implementation Status
 
-Last updated: 2026-07-13
+Last reviewed: 2026-07-15
+Source audit baseline: 33347ad, branch codex/goal19-cp3-integration.
 
-## Goal 18 Foundation: Portable Release And CI/CD Contract
+## Goal 19 Condition
 
-Implemented:
+The CP3 integration slice is implemented locally. The current source exposes the
+direct provider-neutral SCM contract as ci.scm_change_evidence, carries all six
+SCM budgets through the server/provider boundary, preserves provider-native IDs,
+registers capabilities from provider metadata, and keeps the observer's poll and
+webhook paths on one dedupe/stale-suppression state model.
 
-- Portability contract for npm, stdio, private Streamable HTTP, and non-root
-  OCI execution on `linux/amd64` and `linux/arm64`.
-- Reusable CI/CD integration contract that keeps Pak Satpam as the evidence and
-  approval boundary while a separate caller owns polling and delivery state.
-- Non-publishing Buildx validation for both target architectures in the public
-  repository validation workflow.
-- Publish workflow preflight now runs the TypeScript typecheck before producing
-  the existing immutable multi-architecture GHCR artifact.
-- Optional non-root CI observer companion with exact allowlists, read-only
-  GitHub App tokens, bounded terminal polling, durable lease/dedupe state,
-  signed internal delivery, sanitized health/metrics, and separate lightweight
-  success versus failure-analysis routes.
-- Observer restart recovery, same-poll dedupe, long-running completion safety,
-  pagination truncation health, provider/Hermes failures, and metadata-only
-  evidence have deterministic tests.
+The local contract tests cover:
 
-Not yet live:
+- CP3 SCM selectors, provider-neutral results, all six budgets, and digest output;
+- GitHub Actions, Jenkins, and Bitbucket Cloud read adapters;
+- Jenkins/Bitbucket reverse-proxy path joining without duplicate prefixes;
+- provider-native numeric and UUID identifiers;
+- bounded logs, SCM patches, metrics, telemetry references, and non-causal
+  correlations;
+- webhook/poll duplicate suppression, restart state, stale suppression, bounded
+  pagination, and signed delivery;
+- capability isolation and GitHub-only approval-gated rerun.
 
-- The private edge CI event observer and Hermes route extension remain behind
-  the Goal 18 live-apply approval boundary. The current Hermes route is
-  incident-only, and changing it may restart the production gateway.
+This status describes implementation and tests at the audit baseline. It is not a
+publication or deployment receipt.
 
-## Goal 14: CI/CD Analysis And Gated Rerun
+## Implemented Product
 
-Implemented locally:
+- npm package identity @hmrdkn-labs/pak-satpam and MCP identity
+  io.github.hmrdkn-labs/pak-satpam;
+- preserved observability-agent-mcp, observer, approval, and approve aliases,
+  plus pak-satpam, pak-satpam-http, and pak-satpam-doctor;
+- stdio and private stateless Streamable HTTP transports;
+- observability-only, ci-only, and combined runtime profiles;
+- bounded Grafana, Prometheus-compatible metrics, vmalert/Alertmanager, CI, SCM,
+  and telemetry evidence;
+- non-root OCI packaging for linux/amd64 and linux/arm64;
+- metadata-only doctor diagnostics and file-injected credentials;
+- optional observer polling, verified GitHub workflow_run webhook intake,
+  durable lease/dedupe state, stale suppression, signed routes, and sanitized
+  health/metrics.
 
-- Provider-neutral CI schemas and a GitHub Actions adapter.
-- Four bounded read-only tools plus one approval-gated failed-job rerun.
-- Eight deterministic failure classes and runbook-backed dry-run plans.
-- Pre-output log redaction, strict allowlists, freshness checks, GitHub App
-  installation auth, atomic replay protection, and metadata-only audit events.
-- An operator-only approval CLI and controlled first-attempt failure workflow.
-- A dedicated authenticated `/mcp/ci` surface containing exactly four read
-  tools plus the approval-gated failed-job rerun action.
-- Separate short-lived GitHub App tokens for Actions read operations and the
-  approval-gated Actions write operation.
+## Provider Status
 
-The public multi-architecture OCI image is published at
-`ghcr.io/hmrdkn-labs/pak-satpam`; production uses the immutable
-digest recorded by the private infra evidence. Live edge deployment and
-controlled Discord evidence remain private-infra responsibilities.
+| Provider | Read | SCM | Rerun | Status |
+| --- | --- | --- | --- | --- |
+| GitHub Actions | implemented | GitHub implemented | approval-gated failed jobs | built-in |
+| Jenkins | implemented | multibranch implemented | unsupported | built-in read-only |
+| Bitbucket Cloud | implemented | pull-request/diff implemented | unsupported | built-in read-only |
+| Bitbucket Data Center | contract-only | contract-only | unsupported | no adapter |
 
-## Goal 11: Private Provider Shadow
+The current telemetry runtime bridge queries named metrics only. Log and trace
+types are bounded schema references, not raw log/trace provider integrations.
 
-Implemented:
+## Publication And Deployment Blockers
 
-- Seven namespaced read-only tools with strict input and output schemas.
-- Discriminated instant/range and available/unavailable result invariants.
-- Exact named-query, service, dashboard, and panel allowlists.
-- VictoriaMetrics metrics and vmalert alert normalization with bounded output.
-- Grafana Viewer-token PNG adapter with type, size, route, and timeout checks.
-- Explicit fresh/cached/stale/unknown semantics; provider failure remains unknown.
-- Deterministic light/dark synthetic visuals for local tests.
-- Stdio and authenticated stateless Streamable HTTP transports.
-- Host allowlisting, constant-time Bearer checks, and sanitized health/errors.
-- Strict YAML runtime policy plus `0600` file-injected credentials.
-- Installed-package, Inspector, stdio, HTTP, and non-root OCI smoke tests.
+- No publish or deploy was performed for this task.
+- npm publication requires an authorized tag/release workflow and a recorded
+  package artifact.
+- OCI publication requires the authorized main-only workflow and an immutable
+  GHCR digest; validation jobs are non-publishing.
+- The private edge observer and Hermes route remain deployment-owner work and
+  are not proven live by this repository.
+- Private HTTP uses a static file-injected bearer and exact Host allowlists. It
+  is not public OAuth, multi-tenant authorization, or a public endpoint.
+- Public exposure remains blocked pending OAuth protected-resource metadata,
+  issuer/audience/scope validation, Origin policy, ingress controls, and tenant
+  isolation.
 
-Verified private-shadow behavior:
+## Verification
 
-- Seven observability tools discovered by the edge agent client as read-only,
-  plus four read-only CI tools and one approval-gated failed-job rerun.
-- Metrics series and active-alert counts match direct provider counts.
-- Grafana renderer absence returns structured unknown/unavailable evidence.
-- Deployment, network placement, and secrets remain owned by the private infra repo.
+The repository-defined aggregate gate is npm run validate. The foundation script
+also checks required docs, package identity, forbidden private/secret surfaces,
+workflow YAML, and local Markdown links. Multi-architecture and container
+runtime checks are separate non-publishing gates in the validation workflow.
 
-Current boundaries:
-
-- No public endpoint or OAuth authorization-server integration.
-- No shell, source write, deployment, alert mutation, or dashboard mutation tools.
-- No logs or traces until the metrics contract is stable.
-- The OCI release is published through the main-only multi-architecture GitHub
-  Actions workflow; package visibility is public while runtime credentials and
-  deployment policy remain private.
-
-Verification command: `npm run validate`
-
-Next checkpoint: preserve the read-only contract while adding only capability
-that is justified by observed operator pain; do not infer a need for OAuth or
-broader deployment authority from the public package release.
+Historical objective and design evidence remain in the Goal 19 prompt,
+architecture decisions, and changelog. They should not be read as publication
+receipts.

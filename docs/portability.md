@@ -1,115 +1,113 @@
-# Portability And Release Contract
+# Installation And Portability
 
-Pak Satpam exposes the same MCP application through three supported launch
-shapes. The transport and packaging change; tool names and schema version do
-not.
+Pak Satpam keeps one MCP schema contract across npm, OCI, stdio, and private
+Streamable HTTP. The supported runtime is Node.js 22 or newer.
 
-| Distribution | Transport | Platforms |
-| --- | --- | --- |
-| npm package `@hmrdkn-labs/pak-satpam` | stdio | Node.js 22 on Linux amd64 or arm64 |
-| npm package `@hmrdkn-labs/pak-satpam` | private Streamable HTTP | Node.js 22 on Linux amd64 or arm64 |
-| OCI image `ghcr.io/hmrdkn-labs/pak-satpam` | stdio or private Streamable HTTP | `linux/amd64`, `linux/arm64` |
-| npm package or OCI image | private CI observer companion | Node.js 22 on Linux amd64 or arm64 |
+## Distribution Matrix
 
-The public identifiers are compatibility contracts: npm package
-`@hmrdkn-labs/pak-satpam`, legacy CLI `observability-agent-mcp`, HTTP
-entrypoint `dist/http-cli.js`, OCI image
-`ghcr.io/hmrdkn-labs/pak-satpam`, commit tag `sha-<commit>`, and
-MCP schema version `1.0`. Portability work must not rename them.
-The optional observer CLI `observability-agent-mcp-observer` is additive and
-does not change the MCP server identity or tool contract.
+| Distribution | Launch | Platforms | Current condition |
+| --- | --- | --- | --- |
+| npm package @hmrdkn-labs/pak-satpam | pak-satpam or pak-satpam-http | Node.js 22, Linux amd64/arm64 | package contract implemented; publication requires authorized release |
+| OCI image ghcr.io/hmrdkn-labs/pak-satpam | node dist/cli.js or node dist/http-cli.js | linux/amd64 and linux/arm64 | image contract and non-publishing Buildx gates implemented; publication/deploy not proven here |
+| npm package or OCI image | observability-agent-mcp-observer | Node.js 22, Linux amd64/arm64 | optional observer companion; private deployment required |
 
-The private HTTP transport keeps the full server at `/mcp` and, when CI is
-configured, exposes an additional `/mcp/ci` surface containing exactly the five
-CI tools. The CI-only surface is portable across the same OCI architectures and
-fails closed with no route when CI is disabled.
+The compatibility identities are package @hmrdkn-labs/pak-satpam, MCP name
+io.github.hmrdkn-labs/pak-satpam, schema version 1.0, the preserved
+observability-agent-mcp aliases, and the OCI repository
+ghcr.io/hmrdkn-labs/pak-satpam. A release process must provide an immutable
+version or digest. This documentation does not claim that an artifact has been
+published.
 
-## Stdio
+## npm And Stdio
 
-The default CLI uses the deterministic local provider and does not open a
-network listener:
+~~~bash
+mkdir pak-satpam-runtime
+cd pak-satpam-runtime
+npm init -y
+npm install @hmrdkn-labs/pak-satpam
+npm exec -- pak-satpam
+~~~
 
-```bash
+The stdio server does not open a network listener and uses the deterministic
+local provider. A client launches the executable and owns its stdin/stdout
+lifecycle. The installed package also exposes the HTTP and doctor aliases.
+
+For a source checkout:
+
+~~~bash
 npm ci
 npm run build
 npm run test:stdio
 node dist/cli.js
-```
+~~~
 
-An MCP client launches the built CLI with `node dist/cli.js`. Do not type
-requests into the process directly.
+Do not type MCP requests into the process. Configure the executable as the
+command of an MCP-compatible client.
 
 ## Private Streamable HTTP
 
-This pre-release transport is for a private, single-operator network. It
-requires an operator-owned YAML policy plus file-injected Grafana and MCP
-tokens. Secret files must be regular files with mode `0600`; their contents are
-not tool inputs or command arguments.
+Private HTTP is stateless per MCP request and intended for a private,
+single-operator network. It is not the public OAuth transport.
 
-```bash
-npm ci
-npm run build
-MCP_HTTP_HOST=127.0.0.1 \
-MCP_HTTP_PORT=8765 \
-MCP_HTTP_ALLOWED_HOSTS=127.0.0.1 \
-OBSERVABILITY_PROVIDER_CONFIG=./runtime/provider-config.yml \
-GRAFANA_TOKEN_FILE=./runtime/grafana-token \
-MCP_TOKEN_FILE=./runtime/mcp-token \
-node dist/http-cli.js
-```
+Required environment names are:
 
-The allowed Host list is exact. Do not expose this mode publicly or treat its
-static bearer credential as OAuth. Its protocol smoke check is:
+~~~text
+MCP_HTTP_HOST
+MCP_HTTP_PORT
+MCP_HTTP_ALLOWED_HOSTS
+OBSERVABILITY_PROVIDER_CONFIG
+MCP_TOKEN_FILE
+GRAFANA_TOKEN_FILE
+~~~
 
-```bash
-node scripts/http-smoke.mjs http://127.0.0.1:8765/mcp ./runtime/mcp-token
-```
+GRAFANA_TOKEN_FILE is omitted for ci-only. Every credential path must point to a
+regular 0600 file and values must stay outside configuration, arguments,
+requests, logs, and source control. MCP_TOKEN_FILE must contain at least 16
+bytes. Exact Host matching and a constant-time bearer comparison protect the
+current private route. Bind examples to loopback; a private ingress still needs
+its own authentication and authorization review.
+
+Routes are /mcp for observability, /mcp/ci for CI, and /healthz for process
+liveness. The /mcp route includes CI tools only in combined. The /mcp/ci route
+does not expose observability tools.
 
 ## OCI
 
-Use an immutable commit tag and select the target platform explicitly:
+The Containerfile builds a non-root Node.js image with entrypoint node and
+default command dist/cli.js:
 
-```bash
-IMAGE=ghcr.io/hmrdkn-labs/pak-satpam:sha-<commit>
-docker pull --platform linux/amd64 "$IMAGE"
-docker run --rm --platform linux/amd64 "$IMAGE" dist/cli.js
-docker pull --platform linux/arm64 "$IMAGE"
-docker run --rm --platform linux/arm64 "$IMAGE" dist/cli.js
-```
+~~~bash
+docker run --rm -i ghcr.io/hmrdkn-labs/pak-satpam@sha256:<immutable-digest>
+~~~
 
-For private HTTP, mount the runtime directory read-only and pass the same
-environment variables. The non-root image uses `node` as its entrypoint;
-`dist/cli.js` selects stdio and `dist/http-cli.js` selects HTTP.
+For HTTP, select dist/http-cli.js and mount the configuration and 0600 files
+read-only. Pin the image by digest and retain the previous digest for rollback.
+The public validation workflow builds both target architectures without
+publishing, then runs per-platform runtime smoke where the host supports it.
 
-The same image runs the observer with `dist/observer/cli.js`. Deployments must
-mount its policy, GitHub App identity, installation IDs, HMAC key, and writable
-metadata-only state path explicitly. The observer opens only its configured
-health/metrics listener and outbound GitHub/Hermes connections.
+## Profiles And Examples
 
-## Versioned Examples
+The examples/v1 directory contains placeholder-only contracts:
 
-The [`examples/v1`](../examples/v1/README.md) directory contains placeholder-
-only contracts for observability-only, CI-only, combined, stdio, and private
-HTTP profiles. The HTTP Compose examples build the local `Containerfile`, use
-reserved `example.test` names, mount operator-created `0600` secret files, and
-publish only to loopback. The CI-only client uses `/mcp/ci`; the combined
-client uses `/mcp`.
+| Profile | Route or transport | Configuration |
+| --- | --- | --- |
+| observability-only | /mcp | observability providers and policy |
+| ci-only | /mcp/ci | CI allowlist and provider |
+| combined | /mcp and /mcp/ci | both modules |
+| stdio | process stdin/stdout | deterministic fake provider |
+| private-http | /mcp | loopback observability HTTP |
 
-The examples are starting points, not a deployment policy. Replace the
-provider URLs, repository/workflow allowlist, and file paths in a private copy.
-Do not add private hostnames, addresses, credentials, or topology to this
-public repository.
+The examples build the local image and bind HTTP to loopback. Replace provider
+origins, allowlists, and file paths in a private copy. Do not add real hostnames,
+addresses, credentials, or topology to this repository.
 
-## Gates
+## Release And Rollback
 
-Validation runs the package/protocol gates, a non-publishing multi-platform
-Buildx build, and a per-platform `--load` runtime smoke for both target
-platforms. The runtime smoke starts the image as `node`, rejects an
-unauthenticated or disallowed-host request, and completes a real MCP HTTP
-handshake and read-only call. QEMU is used for emulated execution where the
-host architecture requires it. The publish workflow repeats the release
-contract check before publishing the existing GHCR image with provenance and
-an SBOM. Neither gate deploys a workload or reads runtime secret files.
+Validation is non-publishing. The authorized release flow separately validates
+metadata, builds the artifact, and records the immutable reference. It does not
+deploy the runtime. A deployment owner must canary the pinned artifact privately,
+verify health and MCP read-only calls, and keep the previous pinned artifact.
 
-Private HTTP remains a private, single-operator mode. The examples bind to
-loopback and the public release contract does not authorize public exposure.
+Rollback means restarting the previous npm version or OCI digest with the same
+private configuration and credential paths, then repeating those checks. Do not
+delete observer metadata-only state as part of a routine rollback.
