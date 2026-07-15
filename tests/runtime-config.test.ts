@@ -55,6 +55,7 @@ describe("private runtime configuration", () => {
     });
     const requestUrl = new URL(String(fetch.mock.calls[0]?.[0]));
     expect(requestUrl.origin).toBe("http://victoriametrics:8428");
+    expect(fetch.mock.calls[0]?.[1]?.headers).toEqual({ Accept: "application/json" });
     expect(requestUrl.searchParams.get("query")).toBe('up{job="homelab-node"}');
     expect(capabilities.data.enabledTools).toEqual(
       expect.arrayContaining([
@@ -203,6 +204,9 @@ ci:
     const runtime = loadRuntimeConfiguration({ configPath, grafanaTokenPath, mcpTokenPath, fetch, clock: () => FIXED_NOW });
     await runtime.provider!.activeAlerts({});
     expect(String(fetch.mock.calls[0]?.[0])).toBe("https://grafana:3000/api/alertmanager/grafana/api/v2/alerts");
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+      headers: { Authorization: "Bearer grafana-test-token-123456" },
+    });
     expect(runtime.ci?.provider.constructor.name).toBe("JenkinsProvider");
   });
 

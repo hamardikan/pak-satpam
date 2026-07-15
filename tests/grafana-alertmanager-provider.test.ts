@@ -24,15 +24,16 @@ describe("Grafana embedded Alertmanager adapter", () => {
       baseUrl: "https://prometheus.example",
       alertsBaseUrl,
       alertsProvider: "grafana-alertmanager",
+      alertsToken: "grafana-test-token-123456",
       fetch,
       clock: () => NOW,
-      queryTemplates: {},
+      queryTemplates: { up: { expression: "up" } },
       serviceHealth: {},
     });
 
     const result = await provider.activeAlerts({ services: ["backend"] });
 
-    expect(result.providerClass).toBe("grafana");
+    expect(result.providerClass).toBe("grafana-alertmanager");
     expect(result.data.alerts).toEqual([expect.objectContaining({
       alertId: "abc123",
       name: "BackendDown",
@@ -46,6 +47,11 @@ describe("Grafana embedded Alertmanager adapter", () => {
     expect(requestUrl.pathname).toMatch(/\/api\/alertmanager\/grafana\/api\/v2\/alerts$/);
     expect(requestUrl.pathname).not.toContain("api/alertmanager/grafana/api/v2/alerts/api/");
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET", redirect: "error" });
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({
+      headers: { Authorization: "Bearer grafana-test-token-123456" },
+    });
+    await provider.queryMetrics({ queryTemplate: "up" });
+    expect(fetch.mock.calls[1]?.[1]?.headers).toEqual({ Accept: "application/json" });
   });
 
   it("reports the configured Grafana provider class in capabilities", async () => {
@@ -59,8 +65,8 @@ describe("Grafana embedded Alertmanager adapter", () => {
     });
 
     await expect(provider.capabilities({})).resolves.toMatchObject({
-      providerClass: "grafana",
-      data: { providerClasses: ["grafana"] },
+      providerClass: "grafana-alertmanager",
+      data: { providerClasses: ["grafana-alertmanager"] },
     });
   });
 

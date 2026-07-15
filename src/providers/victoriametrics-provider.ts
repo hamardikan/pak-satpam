@@ -30,7 +30,7 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const VMALERT_ALERTS_PATH = "/api/v1/alerts";
 const GRAFANA_ALERTMANAGER_ALERTS_PATH = "/api/alertmanager/grafana/api/v2/alerts";
 const PROMETHEUS_PROVIDER_CLASS = "prometheus-compatible" as const;
-const GRAFANA_PROVIDER_CLASS = "grafana" as const;
+const GRAFANA_ALERTMANAGER_PROVIDER_CLASS = "grafana-alertmanager" as const;
 
 export interface VictoriaMetricsQueryTemplate {
   /** Static PromQL owned by the deployment configuration. */
@@ -56,8 +56,10 @@ export interface VictoriaMetricsProviderOptions {
   /** vmalert or Grafana's embedded Alertmanager read-only API. */
   readonly alertsBaseUrl: string;
   readonly alertsProvider?: "vmalert" | "grafana-alertmanager";
-  /** Optional bearer token; private internal VictoriaMetrics deployments need none. */
+  /** Optional bearer token for metrics; private internal VictoriaMetrics deployments need none. */
   readonly token?: string;
+  /** Optional bearer token for the alerts endpoint (for example, Grafana Alertmanager). */
+  readonly alertsToken?: string;
   readonly fetch: typeof globalThis.fetch;
   readonly queryTemplates: Readonly<Record<string, VictoriaMetricsQueryTemplate>>;
   readonly serviceHealth: Readonly<Record<string, ServiceHealthMapping>>;
@@ -83,17 +85,19 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
   readonly #options: VictoriaMetricsProviderOptions;
   private readonly baseUrl: URL;
   private readonly alertsUrl: URL;
-  private readonly providerClass: "grafana" | "prometheus-compatible";
+  private readonly providerClass: "grafana-alertmanager" | "prometheus-compatible";
   private readonly clock: Clock;
   private readonly timeoutMs: number;
 
   constructor(options: VictoriaMetricsProviderOptions) {
     this.#options = options;
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.providerClass = options.alertsProvider === "grafana-alertmanager" ? GRAFANA_PROVIDER_CLASS : PROMETHEUS_PROVIDER_CLASS;
+    this.providerClass = options.alertsProvider === "grafana-alertmanager"
+      ? GRAFANA_ALERTMANAGER_PROVIDER_CLASS
+      : PROMETHEUS_PROVIDER_CLASS;
     this.alertsUrl = normalizeEndpointUrl(
       options.alertsBaseUrl,
-      this.providerClass === "grafana" ? GRAFANA_ALERTMANAGER_ALERTS_PATH : VMALERT_ALERTS_PATH,
+      this.providerClass === GRAFANA_ALERTMANAGER_PROVIDER_CLASS ? GRAFANA_ALERTMANAGER_ALERTS_PATH : VMALERT_ALERTS_PATH,
     );
     this.clock = options.clock ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -170,7 +174,7 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     const request = ActiveAlertsInputSchema.parse(input);
     const observedAt = this.now();
     const grafanaAlertmanager = this.#options.alertsProvider === "grafana-alertmanager";
-    const payload = await this.requestJson(this.alertsUrl);
+    const payload = await this.requestJson(this.alertsUrl, undefined, {}, this.#options.alertsToken);
     if (payload === undefined) {
       return ActiveAlertsResultSchema.parse({
         ...this.evidence(observedAt, "unknown", [unavailableWarning()]),
@@ -270,8 +274,11 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     baseUrl: URL,
     path?: string,
     parameters: Record<string, string> = {},
+    token = this.#options.token,
   ): Promise<unknown | undefined> {
-    const url = path === undefined ? new URL(baseUrl.toString()) : new URL(path, baseUrl);
+    const url = path === undefined
+      ? new URL(baseUrl.toString())
+      : new URL(path.replace(/^\/+/, ""), baseUrl);
     if (url.origin !== baseUrl.origin) return undefined;
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     const controller = new AbortController();
@@ -280,7 +287,7 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
       const response = await this.#options.fetch(url, {
         method: "GET",
         redirect: "error",
-        headers: this.requestHeaders(),
+        headers: this.requestHeaders(token),
         signal: controller.signal,
       });
       if (!response.ok) return undefined;
@@ -304,11 +311,11 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     });
   }
 
-  private requestHeaders(): Record<string, string> {
-    const token = this.#options.token?.trim();
+  private requestHeaders(token?: string): Record<string, string> {
+    const normalizedToken = token?.trim();
     return {
       Accept: "application/json",
-      ...(token === undefined || token.length === 0 ? {} : { Authorization: `Bearer ${token}` }),
+      ...(normalizedToken === undefined || normalizedToken.length === 0 ? {} : { Authorization: `Bearer ${normalizedToken}` }),
     };
   }
 
