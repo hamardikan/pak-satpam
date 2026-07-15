@@ -23,6 +23,7 @@ trap cleanup EXIT
 
 cat >"$temporary/provider-config.yml" <<'YAML'
 version: 1
+profile: observability-only
 providers:
   metrics: { type: prometheus-compatible, base_url: "http://127.0.0.1:1" }
   alerts: { type: vmalert, base_url: "http://127.0.0.1:1" }

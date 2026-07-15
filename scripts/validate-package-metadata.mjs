@@ -24,6 +24,7 @@ const legacyBins = {
   "observability-agent-mcp-observer": "dist/observer/cli.js",
   "observability-agent-mcp-approval": "dist/approval-cli.js",
   "observability-agent-mcp-approve": "dist/approval-cli.js",
+  "pak-satpam-doctor": "dist/diagnostics/cli.js",
 };
 
 assert(packageJson.name === packageName, `package name must be ${packageName}`);
@@ -43,7 +44,6 @@ for (const [name, target] of Object.entries(legacyBins)) {
 }
 assert(bins["pak-satpam"] === "dist/cli.js", "pak-satpam must point to the stdio build");
 assert(bins["pak-satpam-http"] === "dist/http-cli.js", "pak-satpam-http must point to the HTTP build");
-assert(bins["pak-satpam-doctor"] === undefined, "doctor alias cannot be declared without a doctor build");
 for (const [name, target] of Object.entries(bins)) {
   assert(target.startsWith("dist/") && target.endsWith(".js"), `bin ${name} must point to a dist JavaScript file`);
   const source = join(root, target.replace(/^dist\//, "src/").replace(/\.js$/, ".ts"));
@@ -57,6 +57,7 @@ assert(JSON.stringify(sortObject(packageLock.packages[""].bin)) === JSON.stringi
 
 assert(serverJson.$schema === "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json", "server.json schema is not canonical");
 assert(serverJson.name === mcpName, "server.json name does not match mcpName");
+assert(serverJson.repository?.url === "https://github.com/hmrdkn-labs/pak-satpam" && serverJson.repository?.source === "github", "server.json repository is not canonical");
 assert(serverJson.version === version, "server.json version is inconsistent");
 assert(serverJson.packages?.length === 1, "server.json must declare exactly one package");
 const [serverPackage] = serverJson.packages;

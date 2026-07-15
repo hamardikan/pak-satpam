@@ -6,13 +6,13 @@ not.
 
 | Distribution | Transport | Platforms |
 | --- | --- | --- |
-| npm package `@hamardikan/observability-agent-mcp` | stdio | Node.js 22 on Linux amd64 or arm64 |
-| npm package `@hamardikan/observability-agent-mcp` | private Streamable HTTP | Node.js 22 on Linux amd64 or arm64 |
+| npm package `@hmrdkn-labs/pak-satpam` | stdio | Node.js 22 on Linux amd64 or arm64 |
+| npm package `@hmrdkn-labs/pak-satpam` | private Streamable HTTP | Node.js 22 on Linux amd64 or arm64 |
 | OCI image `ghcr.io/hmrdkn-labs/pak-satpam` | stdio or private Streamable HTTP | `linux/amd64`, `linux/arm64` |
 | npm package or OCI image | private CI observer companion | Node.js 22 on Linux amd64 or arm64 |
 
 The public identifiers are compatibility contracts: npm package
-`@hamardikan/observability-agent-mcp`, CLI `observability-agent-mcp`, HTTP
+`@hmrdkn-labs/pak-satpam`, legacy CLI `observability-agent-mcp`, HTTP
 entrypoint `dist/http-cli.js`, OCI image
 `ghcr.io/hmrdkn-labs/pak-satpam`, commit tag `sha-<commit>`, and
 MCP schema version `1.0`. Portability work must not rename them.

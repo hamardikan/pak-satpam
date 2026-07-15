@@ -23,6 +23,7 @@ const packageLock = readJson("package-lock.json") as {
 const serverJson = readJson("server.json") as {
   name: string;
   version: string;
+  repository: { url: string; source: string };
   packages: Array<{
     registryType: string;
     identifier: string;
@@ -58,7 +59,7 @@ describe("release metadata", () => {
     expect(packageJson.bin).toMatchObject(legacyBins);
     expect(packageJson.bin["pak-satpam"]).toBe("dist/cli.js");
     expect(packageJson.bin["pak-satpam-http"]).toBe("dist/http-cli.js");
-    expect(packageJson.bin).not.toHaveProperty("pak-satpam-doctor");
+    expect(packageJson.bin["pak-satpam-doctor"]).toBe("dist/diagnostics/cli.js");
 
     for (const target of Object.values(packageJson.bin)) {
       const source = target.replace(/^dist\//, "src/").replace(/\.js$/, ".ts");
@@ -69,6 +70,7 @@ describe("release metadata", () => {
   it("uses the official npm package shape for MCP Registry metadata", () => {
     expect(serverJson.name).toBe(MCP_NAME);
     expect(serverJson.version).toBe(VERSION);
+    expect(serverJson.repository).toEqual({ url: "https://github.com/hmrdkn-labs/pak-satpam", source: "github" });
     expect(serverJson.packages).toEqual([
       {
         registryType: "npm",
@@ -92,6 +94,16 @@ describe("release metadata", () => {
     const registryWorkflow = readText(".github/workflows/publish-mcp-registry.yml");
     expect(registryWorkflow).toMatch(/validate-package-metadata\.mjs --require-built/);
     expect(registryWorkflow).not.toMatch(/mcp-publisher publish/);
+
+    const containerWorkflow = readText(".github/workflows/publish-container.yml");
+    expect(containerWorkflow).toMatch(/workflow_dispatch:/);
+    expect(containerWorkflow).toMatch(/if: github\.ref == 'refs\/heads\/main'/);
+    expect(containerWorkflow).not.toMatch(/^\s+pull_request:\s*$/m);
+    expect(containerWorkflow).not.toMatch(/^\s+push:\s*$/m);
+    expect(npmWorkflow).not.toMatch(/^\s+pull_request:\s*$/m);
+    expect(readText("scripts/package-smoke.mjs")).toContain('"@hmrdkn-labs"');
+    expect(readText("scripts/package-smoke.mjs")).not.toContain('"@hamardikan"');
+    expect(readText("src/server/create-server.ts")).toMatch(/version: VERSION/);
   });
 });
 

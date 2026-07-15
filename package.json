@@ -41,7 +41,8 @@
     "observability-agent-mcp-approval": "dist/approval-cli.js",
     "observability-agent-mcp-approve": "dist/approval-cli.js",
     "pak-satpam": "dist/cli.js",
-    "pak-satpam-http": "dist/http-cli.js"
+    "pak-satpam-http": "dist/http-cli.js",
+    "pak-satpam-doctor": "dist/diagnostics/cli.js"
   },
   "files": [
     "dist",

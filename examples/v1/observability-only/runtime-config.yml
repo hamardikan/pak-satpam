@@ -1,4 +1,5 @@
 version: 1
+profile: observability-only
 providers:
   metrics:
     type: prometheus-compatible

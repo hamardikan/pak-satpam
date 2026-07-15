@@ -28,8 +28,8 @@ try {
   const installedRoot = join(
     temporary,
     "node_modules",
-    "@hamardikan",
-    "observability-agent-mcp",
+    "@hmrdkn-labs",
+    "pak-satpam",
   );
   const module = await import(pathToFileURL(join(installedRoot, "dist", "index.js")).href);
   assert.equal(typeof module.createObservabilityServer, "function");
@@ -40,6 +40,11 @@ try {
   const bin = join(temporary, "node_modules", ".bin", "observability-agent-mcp");
   assert(statSync(bin).isFile());
   assert(statSync(join(temporary, "node_modules", ".bin", "observability-agent-mcp-observer")).isFile());
+  assert(statSync(join(temporary, "node_modules", ".bin", "pak-satpam")).isFile());
+  assert(statSync(join(temporary, "node_modules", ".bin", "pak-satpam-http")).isFile());
+  const doctorBin = join(temporary, "node_modules", ".bin", "pak-satpam-doctor");
+  assert(statSync(doctorBin).isFile());
+  assert.match(execFileSync(doctorBin, ["--help"], { encoding: "utf8" }), /Usage: pak-satpam-doctor/);
   const transport = new StdioClientTransport({ command: bin, stderr: "pipe" });
   const client = new Client({ name: "installed-package-smoke", version: "1.0.0" });
   try {

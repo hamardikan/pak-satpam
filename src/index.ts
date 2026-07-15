@@ -4,6 +4,7 @@ export { FakeObservabilityProvider } from "./providers/fake-provider.js";
 export { GrafanaVisualProvider } from "./providers/grafana-visual-provider.js";
 export { VictoriaMetricsProvider } from "./providers/victoriametrics-provider.js";
 export { loadRuntimeConfiguration } from "./runtime/load-runtime-configuration.js";
+export { diagnoseRuntimeConfiguration } from "./diagnostics/config-diagnostics.js";
 export * from "./approval.js";
 export * from "./ci/index.js";
 export type {

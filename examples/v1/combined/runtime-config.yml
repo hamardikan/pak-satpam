@@ -1,4 +1,5 @@
 version: 1
+profile: combined
 providers:
   metrics:
     type: prometheus-compatible

@@ -143,10 +143,18 @@ Version 1 has five documented installation profiles under
 | stdio | local process stdin/stdout | observability tools |
 | private-http | private Streamable HTTP at `/mcp` | observability tools |
 
-The CI-only profile still supplies the complete runtime configuration because
-the current HTTP entrypoint loads observability providers before registering
-the CI-only route. The examples use placeholders and do not contain private
+The CI-only profile supplies only CI configuration and exposes only the
+`/mcp/ci` route. The examples use placeholders and do not contain private
 topology or credentials.
+
+To inspect configuration readiness without printing secret values, run the
+metadata-only diagnostic bin with operator-supplied paths:
+
+```bash
+pak-satpam-doctor --config ./runtime/provider-config.yml \
+  --mcp-token ./runtime/mcp-token \
+  --grafana-token ./runtime/grafana-token
+```
 
 ### Container
 

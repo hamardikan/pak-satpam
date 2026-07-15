@@ -31,5 +31,5 @@ docker compose -f examples/v1/observability-only/compose.yml up --build
 
 Use the matching `client-config.json` or send the standard MCP client request
 to the endpoint with the operator-supplied bearer token. The CI-only profile
-still requires the observability provider fields because the current HTTP
-entrypoint always loads the complete version 1 runtime configuration.
+requires only its CI provider and approval fields; the HTTP entrypoint exposes
+`/mcp/ci` without loading observability providers.
