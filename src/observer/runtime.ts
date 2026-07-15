@@ -3,6 +3,8 @@ import { createServer, type Server } from "node:http";
 import { CIRepositorySchema, CIRunIdSchema, CIWorkflowSchema, type CIWorkflowRun } from "../domain/ci-schemas.js";
 import { redactMetadata } from "../ci/redaction.js";
 import { CIProviderError, type CIProvider } from "../providers/ci-provider.js";
+import { assembleFailureAnalysis, buildAgentNotificationPayload, makeUnavailableFailureAnalysis, type AgentNotificationPayload } from "../ci/forensics.js";
+import type { ForensicsProviderSet } from "../providers/ci-provider.js";
 import { GitHubActionsProvider } from "../providers/github-actions-provider.js";
 import { loadObserverConfiguration, observerRuntimeConfig, readObserverSecretFile, type ObserverConfig } from "./config.js";
 import { MappedGitHubAppTokenProvider } from "../providers/mapped-github-app-token-provider.js";
@@ -15,6 +17,7 @@ export type ObserverOutcome = "success" | "failure" | "cancelled" | "timed_out" 
 
 export type ObserverProvider = CIProvider & {
   readonly providerClass?: string;
+  readonly forensics?: ForensicsProviderSet;
   listWorkflowRuns(input: ObserverRunListInput): Promise<{ runs: readonly CIWorkflowRun[]; hasMore: boolean; nextPage?: number }>;
 };
 
@@ -451,6 +454,30 @@ export class ObserverRuntime {
         return { target: currentTarget, failed: true, delivered, deliveryFailures };
       }
 
+      if (analysisRequired) {
+        if (analysisDelivered) continue;
+        const analysisEvent = await this.buildEvent(run, outcome, options.now, true, options.source);
+        currentTarget = markSeen(options.state.targets[options.targetKey] ?? currentTarget, eventId, { outcome, observedAt: analysisEvent.observedAt, delivery: "pending", analysisDelivery: "pending" });
+        options.state.targets[options.targetKey] = currentTarget;
+        this.#state.save(withUpdatedAt(options.state, options.now));
+        try {
+          await this.#deliver(serializeObserverEvent(analysisEvent, this.#config.maxPayloadBytes), deliveryEventId(eventId, "analysis"), "analysis");
+          currentTarget = markSeen(options.state.targets[options.targetKey] ?? currentTarget, eventId, { outcome, observedAt: analysisEvent.observedAt, delivery: "delivered", deliveredAt: options.now.toISOString(), statusDelivery: "delivered", statusDeliveredAt: options.now.toISOString(), analysisDelivery: "delivered", analysisDeliveredAt: options.now.toISOString() });
+          options.state.targets[options.targetKey] = currentTarget;
+          this.#state.save(withUpdatedAt(options.state, options.now));
+          this.#metrics.recordDelivery();
+          delivered += 1;
+        } catch {
+          this.#metrics.recordDeliveryFailure();
+          deliveryFailures += 1;
+          currentTarget = withDeliveryBackoff(currentTarget, options.now, this.#config.deliveryBackoffMs);
+          options.state.targets[options.targetKey] = currentTarget;
+          this.#state.save(withUpdatedAt(options.state, options.now));
+          return { target: currentTarget, failed: true, delivered, deliveryFailures };
+        }
+        continue;
+      }
+
       if (!statusDelivered) {
         const statusEvent = await this.buildEvent(run, outcome, options.now, false, options.source);
         currentTarget = markSeen(options.state.targets[options.targetKey] ?? currentTarget, eventId, { outcome, observedAt: statusEvent.observedAt, delivery: "pending", statusDelivery: "pending" });
@@ -473,77 +500,40 @@ export class ObserverRuntime {
         }
       }
 
-      if (analysisRequired && !analysisDelivered) {
-        const analysisEvent = await this.buildEvent(run, outcome, options.now, true, options.source);
-        currentTarget = markSeen(options.state.targets[options.targetKey] ?? currentTarget, eventId, { outcome, observedAt: analysisEvent.observedAt, analysisDelivery: "pending" });
-        options.state.targets[options.targetKey] = currentTarget;
-        this.#state.save(withUpdatedAt(options.state, options.now));
-        try {
-          await this.#deliver(serializeObserverEvent(analysisEvent, this.#config.maxPayloadBytes), deliveryEventId(eventId, "analysis"), "analysis");
-          currentTarget = markSeen(options.state.targets[options.targetKey] ?? currentTarget, eventId, { outcome, observedAt: analysisEvent.observedAt, analysisDelivery: "delivered", analysisDeliveredAt: options.now.toISOString() });
-          options.state.targets[options.targetKey] = currentTarget;
-          this.#state.save(withUpdatedAt(options.state, options.now));
-          this.#metrics.recordDelivery();
-          delivered += 1;
-        } catch {
-          this.#metrics.recordDeliveryFailure();
-          deliveryFailures += 1;
-          currentTarget = withDeliveryBackoff(currentTarget, options.now, this.#config.deliveryBackoffMs);
-          options.state.targets[options.targetKey] = currentTarget;
-          this.#state.save(withUpdatedAt(options.state, options.now));
-          return { target: currentTarget, failed: true, delivered, deliveryFailures };
-        }
-      }
     }
     return { target: currentTarget, failed: false, delivered, deliveryFailures };
   }
 
   private targetCount(): number { return targets(this.#config).length; }
 
-  private async buildEvent(run: CIWorkflowRun, outcome: ObserverOutcome, now: Date, includeAnalysis: boolean, source: ObserverEventSourceKind): Promise<ObserverEvent> {
+  private async buildEvent(run: CIWorkflowRun, outcome: ObserverOutcome, now: Date, includeAnalysis: boolean, source: ObserverEventSourceKind): Promise<ObserverEvent | AgentNotificationPayload> {
     const warnings: Array<{ code: string; message: string }> = [];
-    let analysis: unknown;
-    let evidence: unknown[] | undefined;
-    let remediation: unknown;
     if (includeAnalysis && isAnalysisConclusion(run.conclusion)) {
       const input = { repo: run.repository, workflow: run.workflow, runId: run.id };
       try {
-        const result = await this.#provider.getFailedJobAnalysis(input);
-        analysis = {
-          failedJobCount: result.data.failedJobs.length,
-          categorySummary: result.data.categorySummary,
+        const observerStatusProvider = {
+          ...this.#provider,
+          getWorkflowStatus: async () => ({
+            schemaVersion: "1.0" as const,
+            observedAt: now.toISOString(),
+            providerClass: this.#source.providerClass ?? this.#provider.providerClass ?? "observer",
+            freshness: "fresh" as const,
+            truncated: false,
+            redactionsApplied: false,
+            warnings: [],
+            data: { run },
+          }),
         };
-        evidence = [];
-        for (const job of result.data.failedJobs.slice(0, this.#config.maxFailedJobs)) {
-          try {
-            const log = await this.#provider.getLogEvidence({ ...input, jobId: job.id, maxLines: this.#config.maxLogLines });
-            evidence.push({
-              jobId: job.id,
-              category: job.category,
-              redactionsApplied: log.redactionsApplied,
-              truncated: log.truncated,
-              lineCount: log.data.lines.length,
-              sha256: log.data.sha256,
-            });
-          } catch (error) {
-            warnings.push({ code: providerErrorOutcome(error), message: "Job evidence unavailable" });
-          }
-        }
+        const assembled = await assembleFailureAnalysis({
+          provider: observerStatusProvider,
+          ...(this.#provider.forensics === undefined ? {} : { evidence: this.#provider.forensics }),
+          input: { ...input, maxJobs: this.#config.maxFailedJobs, maxLogLines: this.#config.maxLogLines },
+          clock: () => now,
+        });
+        return buildAgentNotificationPayload({ analysis: assembled, eventId: observerEventId(run), source, maxBytes: this.#config.maxPayloadBytes });
       } catch (error) {
-        warnings.push({ code: providerErrorOutcome(error), message: "Failure analysis unavailable" });
-      }
-      try {
-        const plan = (await this.#provider.getRemediationPlan(input)).data;
-        remediation = {
-          dryRun: true,
-          actionCount: plan.actions.length,
-          actions: plan.actions.map((action) => ({
-            category: action.category,
-            runbook: action.runbook,
-          })),
-        };
-      } catch (error) {
-        warnings.push({ code: providerErrorOutcome(error), message: "Remediation plan unavailable" });
+        const fallback = makeUnavailableFailureAnalysis({ run: { ...run, status: "completed" }, observedAt: now, ...(this.#source.providerClass === undefined ? {} : { providerClass: this.#source.providerClass }), code: providerErrorOutcome(error) });
+        return buildAgentNotificationPayload({ analysis: fallback, eventId: observerEventId(run), source, maxBytes: this.#config.maxPayloadBytes });
       }
     }
     return {
@@ -561,9 +551,6 @@ export class ObserverRuntime {
       outcome,
       freshness: outcome === "stale" ? "stale" : "fresh",
       updatedAt: run.updatedAt,
-      ...(analysis === undefined ? {} : { analysis }),
-      ...(evidence === undefined ? {} : { evidence }),
-      ...(remediation === undefined ? {} : { remediation }),
       warnings,
     };
   }
@@ -732,10 +719,23 @@ function withoutBackoff(target: ObserverTargetState): ObserverTargetState {
   return next;
 }
 
-function serializeObserverEvent(event: ObserverEvent, maxBytes: number): string {
+function serializeObserverEvent(event: ObserverEvent | AgentNotificationPayload, maxBytes: number): string {
   const redacted = redactMetadata(event) as Record<string, unknown>;
   let body = JSON.stringify(redacted);
   if (Buffer.byteLength(body, "utf8") <= maxBytes) return body;
+  if (event.type === "ci.failure.analysis") {
+    return JSON.stringify({
+      schemaVersion: "1.0",
+      type: event.type,
+      eventId: event.eventId,
+      dedupeKey: event.dedupeKey,
+      source: event.source,
+      observedAt: event.observedAt,
+      outcome: event.outcome,
+      truncated: true,
+      warnings: [{ code: "payload_truncated", message: "Bounded analysis omitted" }],
+    });
+  }
   delete redacted.evidence;
   redacted.warnings = [...(Array.isArray(redacted.warnings) ? redacted.warnings : []), { code: "payload_truncated", message: "Bounded evidence omitted" }];
   body = JSON.stringify(redacted);

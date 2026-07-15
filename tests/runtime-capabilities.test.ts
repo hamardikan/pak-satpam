@@ -65,6 +65,7 @@ describe("runtime CI capabilities", () => {
       "ci.failed_job_analysis",
       "ci.log_evidence",
       "ci.remediation_plan",
+      "ci.failure_analysis",
     ]);
     expect(tools.every((tool) => tool.description?.includes("jenkins-prod"))).toBe(true);
     expect(tools.some((tool) => tool.description?.includes("GitHub"))).toBe(false);
@@ -87,6 +88,7 @@ describe("runtime CI capabilities", () => {
       "ci.failed_job_analysis",
       "ci.log_evidence",
       "ci.remediation_plan",
+      "ci.failure_analysis",
       "ci.rerun_failed_workflow",
     ]);
     expect(tools.find((tool) => tool.name === "ci.rerun_failed_workflow")?.description).toContain("github-prod");
@@ -108,7 +110,7 @@ describe("runtime CI capabilities", () => {
       },
     });
 
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(5);
     expect(tools.map((tool) => tool.name)).not.toContain("ci.rerun_failed_workflow");
   });
 });

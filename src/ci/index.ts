@@ -18,6 +18,13 @@ export {
   type CIProviderRegistration,
 } from "../providers/ci-provider-registry.js";
 export * from "../domain/ci-provider-contracts.js";
+export * from "../domain/forensics-schemas.js";
+export {
+  assembleFailureAnalysis,
+  buildAgentNotificationPayload,
+  AgentNotificationPayloadSchema,
+} from "./forensics.js";
+export type { ForensicsProviderSet, SCMChangeEvidenceProvider, TelemetryCorrelationProvider } from "../providers/ci-provider.js";
 export { GitHubActionsProvider } from "../providers/github-actions-provider.js";
 export { JenkinsProvider } from "../providers/jenkins-provider.js";
 export { BitbucketProvider } from "../providers/bitbucket-provider.js";

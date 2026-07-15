@@ -12,6 +12,12 @@ import type {
   CIWorkflowStatusResult,
 } from "../domain/ci-schemas.js";
 import type { CIProviderCapability, CIProviderName } from "../domain/ci-provider-contracts.js";
+import type {
+  SCMChangeEvidenceInput,
+  SCMChangeEvidenceResult,
+  TelemetryCorrelationInput,
+  TelemetryCorrelationResult,
+} from "../domain/forensics-schemas.js";
 
 export type CIProviderErrorCode = "unavailable" | "malformed" | "permission" | "unsupported";
 
@@ -42,6 +48,20 @@ export interface CIProviderIdentity {
 
 /** Compatibility shape for existing adapters that expose both ports. */
 export interface CIProvider extends CIReadProvider, CIRerunProvider, CIProviderIdentity {}
+
+/** Optional read-only evidence ports. Adapters may expose either capability. */
+export interface SCMChangeEvidenceProvider {
+  getChangeEvidence(input: SCMChangeEvidenceInput): Promise<SCMChangeEvidenceResult>;
+}
+
+export interface TelemetryCorrelationProvider {
+  getTelemetryCorrelation(input: TelemetryCorrelationInput): Promise<TelemetryCorrelationResult>;
+}
+
+export interface ForensicsProviderSet {
+  readonly scm?: SCMChangeEvidenceProvider;
+  readonly telemetry?: TelemetryCorrelationProvider;
+}
 
 export class CIUnsupportedCapabilityError extends CIProviderError {
   readonly providerName: CIProviderName;

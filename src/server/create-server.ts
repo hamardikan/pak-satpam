@@ -56,6 +56,18 @@ import {
   type CIRerunFailedWorkflowInput,
   type CIWorkflowStatusInput,
 } from "../domain/ci-schemas.js";
+import {
+  CIFailureAnalysisInputSchema,
+  CIFailureAnalysisResultSchema,
+  SCMChangeEvidenceInputSchema,
+  SCMChangeEvidenceResultSchema,
+  TelemetryCorrelationInputSchema,
+  TelemetryCorrelationResultSchema,
+  type CIFailureAnalysisInput,
+  type SCMChangeEvidenceInput,
+  type TelemetryCorrelationInput,
+} from "../domain/forensics-schemas.js";
+import { assembleFailureAnalysis } from "../ci/forensics.js";
 import { CIProviderError } from "../providers/ci-provider.js";
 import { hasCIReadPorts } from "../providers/ci-provider-registry.js";
 import { CIProviderNameSchema } from "../domain/ci-provider-contracts.js";
@@ -261,6 +273,44 @@ function registerCITools(server: McpServer, ci: CIService, clock: Clock): void {
       },
       async (input) => ciRead(ci, "ci.remediation_plan", input, CIRemediationPlanResultSchema, clock, () => provider.getRemediationPlan(input)),
     );
+    server.registerTool(
+      "ci.failure_analysis",
+      {
+        description: `Assemble deterministic, bounded CI, SCM, and telemetry evidence for ${providerLabel}.`,
+        inputSchema: CIFailureAnalysisInputSchema,
+        outputSchema: CIFailureAnalysisResultSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+      async (input) => ciRead(ci, "ci.failure_analysis", input, CIFailureAnalysisResultSchema, clock, () => assembleFailureAnalysis({ provider, ...(ci.forensics === undefined ? {} : { evidence: ci.forensics }), input, clock })),
+    );
+  }
+
+  if (readCapability && ci.forensics?.scm !== undefined) {
+    const scmProvider = ci.forensics.scm;
+    server.registerTool(
+      "ci.scm_change_evidence",
+      {
+        description: `Return bounded, read-only SCM changes for ${providerLabel}.`,
+        inputSchema: SCMChangeEvidenceInputSchema,
+        outputSchema: SCMChangeEvidenceResultSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+      async (input) => ciRead(ci, "ci.scm_change_evidence", input, SCMChangeEvidenceResultSchema, clock, () => scmProvider.getChangeEvidence(input)),
+    );
+  }
+
+  if (readCapability && ci.forensics?.telemetry !== undefined) {
+    const telemetryProvider = ci.forensics.telemetry;
+    server.registerTool(
+      "ci.telemetry_correlation",
+      {
+        description: `Return bounded, read-only named telemetry correlations for ${providerLabel}.`,
+        inputSchema: TelemetryCorrelationInputSchema,
+        outputSchema: TelemetryCorrelationResultSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
+      async (input) => ciRead(ci, "ci.telemetry_correlation", input, TelemetryCorrelationResultSchema, clock, () => telemetryProvider.getTelemetryCorrelation(input)),
+    );
   }
 
   if (readCapability && rerunCapability && metadata.type === "github" && ci.approval !== undefined) {
@@ -300,7 +350,7 @@ function validRuntimeMetadata(ci: CIService): CIProviderRuntimeMetadata | undefi
   return metadata;
 }
 
-async function ciRead<TInput extends CIWorkflowStatusInput | CIFailedJobAnalysisInput | CILogEvidenceInput | CIRemediationPlanInput>(
+async function ciRead<TInput extends CIWorkflowStatusInput | CIFailedJobAnalysisInput | CILogEvidenceInput | CIRemediationPlanInput | CIFailureAnalysisInput | SCMChangeEvidenceInput | TelemetryCorrelationInput>(
   ci: CIService,
   tool: string,
   input: TInput,
