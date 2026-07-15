@@ -16,6 +16,7 @@ import {
   type CIWorkflowStatusInput,
   type CIWorkflowStatusResult,
 } from "../domain/ci-schemas.js";
+import { CIProviderNativeIdSchema } from "../domain/ci-schemas.js";
 import { CIProviderError, type CIProvider, type CITokenProvider, type CIWorkflowRunListInput, type CIWorkflowRunListResult } from "./ci-provider.js";
 import { StaticGitHubTokenProvider } from "./github-app-token-provider.js";
 import { redactText } from "../ci/redaction.js";
@@ -32,6 +33,7 @@ export interface GitHubActionsProviderOptions {
   readonly clock?: () => Date;
   readonly apiBaseUrl?: string;
   readonly maxFreshnessMs?: number;
+  readonly providerName?: string;
 }
 
 export class GitHubActionsProvider implements CIProvider {
@@ -41,6 +43,7 @@ export class GitHubActionsProvider implements CIProvider {
   readonly #clock: () => Date;
   readonly #apiBaseUrl: URL;
   readonly #maxFreshnessMs: number;
+  readonly #providerName: string;
 
   constructor(options: GitHubActionsProviderOptions) {
     if (options.token === undefined && options.tokenProvider === undefined) throw new Error("GitHub token provider is required");
@@ -50,6 +53,7 @@ export class GitHubActionsProvider implements CIProvider {
     this.#clock = options.clock ?? (() => new Date());
     this.#apiBaseUrl = trustedGitHubApiBase(options.apiBaseUrl);
     this.#maxFreshnessMs = options.maxFreshnessMs ?? 5 * 60_000;
+    this.#providerName = options.providerName ?? GITHUB_PROVIDER_NAME;
   }
 
   async getWorkflowStatus(input: CIWorkflowStatusInput): Promise<CIWorkflowStatusResult> {
@@ -59,7 +63,7 @@ export class GitHubActionsProvider implements CIProvider {
     const value = await this.getJson(path, input.repo);
     const rawRun = input.runId === undefined ? firstRun(value) : value;
     const run = normalizeRun(rawRun, input.repo, input.workflow);
-    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(GITHUB_PROVIDER_NAME, this.#clock(), { run }, { freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs) }));
+    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { run }, { freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs) }));
   }
 
   async listWorkflowRuns(input: CIWorkflowRunListInput): Promise<CIWorkflowRunListResult> {
@@ -107,7 +111,7 @@ export class GitHubActionsProvider implements CIProvider {
     const selected = rawLines.slice(0, input.maxLines).map((line, index) => ({ sequence: index + 1, ...redactText(line) }));
     const lines = selected.map(({ sequence, text }) => ({ sequence, text }));
     const redactionsApplied = selected.some((line) => line.redacted);
-    return CILogEvidenceResultSchema.parse(makeCIEvidence(GITHUB_PROVIDER_NAME, this.#clock(), {
+    return CILogEvidenceResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), {
       runId: input.runId,
       jobId: input.jobId,
       jobName: `job-${input.jobId}`,
@@ -125,13 +129,13 @@ export class GitHubActionsProvider implements CIProvider {
       steps: remediationSteps(job.category),
       runbook: `docs/ci-cd-runbook.md#${job.category}`,
     }])).values()];
-    return CIRemediationPlanResultSchema.parse(makeCIEvidence(GITHUB_PROVIDER_NAME, this.#clock(), { runId: input.runId, dryRun: true, actions }, { freshness: analysis.freshness, warnings: analysis.warnings, redactionsApplied: analysis.redactionsApplied }));
+    return CIRemediationPlanResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { runId: input.runId, dryRun: true, actions }, { freshness: analysis.freshness, warnings: analysis.warnings, redactionsApplied: analysis.redactionsApplied }));
   }
 
   async rerunFailedWorkflow(input: { repo: string; workflow: string; runId: string }): Promise<CIRerunFailedWorkflowResult> {
     const response = await this.request(`/repos/${input.repo}/actions/runs/${input.runId}/rerun-failed-jobs`, "POST", input.repo);
     if (![200, 201, 202, 204].includes(response.status)) throw httpError(response.status);
-    return CIRerunFailedWorkflowResultSchema.parse(makeCIEvidence(GITHUB_PROVIDER_NAME, this.#clock(), { runId: input.runId, requestId: "operator-approved", accepted: true, action: "rerun-failed-jobs" }));
+    return CIRerunFailedWorkflowResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { runId: input.runId, requestId: "operator-approved", accepted: true, action: "rerun-failed-jobs" }));
   }
 
   private async getJson(path: string, repository: string): Promise<Record<string, unknown>> {
@@ -220,7 +224,7 @@ function normalizeRun(value: unknown, repository: string, workflow: string): CIW
   const id = typeof raw.id === "number" || typeof raw.id === "string" ? String(raw.id) : "";
   const status = raw.status;
   const conclusion = raw.conclusion === null ? null : raw.conclusion;
-  if (!/^\d{1,20}$/.test(id) || !["queued", "in_progress", "completed"].includes(String(status)) || (conclusion !== null && !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion)))) throw new CIProviderError("malformed");
+  if (!CIProviderNativeIdSchema.safeParse(id).success || !["queued", "in_progress", "completed"].includes(String(status)) || (conclusion !== null && !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion)))) throw new CIProviderError("malformed");
   const createdAt = new Date(stringField(raw, "created_at"));
   const updatedAt = new Date(stringField(raw, "updated_at"));
   const runAttempt = raw.run_attempt;
@@ -246,7 +250,7 @@ function normalizeJob(value: unknown) {
   const name = stringField(raw, "name");
   const status = raw.status;
   const conclusion = raw.conclusion;
-  if (!/^\d{1,20}$/.test(id) || !["queued", "in_progress", "completed"].includes(String(status)) || !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion))) throw new CIProviderError("malformed");
+  if (!CIProviderNativeIdSchema.safeParse(id).success || !["queued", "in_progress", "completed"].includes(String(status)) || !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion))) throw new CIProviderError("malformed");
   const steps = Array.isArray(raw.steps) ? raw.steps.flatMap((step) => {
     try { const value = record(step); return typeof value.name === "string" && value.conclusion !== "success" ? [value.name] : []; } catch { return []; }
   }) : [];

@@ -17,6 +17,7 @@ import {
   type CIWorkflowStatusResult,
   type CIWorkflowRun,
 } from "../domain/ci-schemas.js";
+import { CIProviderNativeIdSchema } from "../domain/ci-schemas.js";
 import { redactText } from "../ci/redaction.js";
 import { CIProviderError, type CIProvider } from "./ci-provider.js";
 
@@ -37,6 +38,7 @@ export interface JenkinsProviderOptions {
   readonly fetch: typeof globalThis.fetch;
   readonly clock?: () => Date;
   readonly maxFreshnessMs?: number;
+  readonly providerName?: string;
 }
 
 /** Read-only Jenkins adapter. The rerun port is deliberately disabled. */
@@ -47,6 +49,7 @@ export class JenkinsProvider implements CIProvider {
   readonly #maxFreshnessMs: number;
   readonly #branch: string | undefined;
   readonly #authorization: string | undefined;
+  readonly #providerName: string;
   constructor(options: JenkinsProviderOptions) {
     this.#baseUrl = trustedBaseUrl(options.baseUrl);
     this.#fetch = options.fetch;
@@ -54,12 +57,13 @@ export class JenkinsProvider implements CIProvider {
     this.#maxFreshnessMs = options.maxFreshnessMs ?? 5 * 60_000;
     this.#branch = options.branch === undefined ? "main" : options.branch;
     this.#authorization = basicAuthorization(options);
+    this.#providerName = options.providerName ?? JENKINS_PROVIDER_NAME;
   }
 
   async getWorkflowStatus(input: CIWorkflowStatusInput): Promise<CIWorkflowStatusResult> {
     const build = await this.getBuild(input.workflow, input.runId);
-    const run = normalizeBuild(build, input.repo, input.workflow);
-    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(JENKINS_PROVIDER_NAME, this.#clock(), { run }, {
+    const run = normalizeBuild(build, input.repo, input.workflow, input.runId);
+    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { run }, {
       freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs),
     }));
   }
@@ -84,7 +88,7 @@ export class JenkinsProvider implements CIProvider {
     const rawLines = raw.split(/\r?\n/).filter((line) => line.length > 0);
     const selected = rawLines.slice(0, Math.min(input.maxLines, 200)).map((line, index) => ({ sequence: index + 1, ...redactText(line) }));
     const lines = selected.map(({ sequence, text }) => ({ sequence, text }));
-    return CILogEvidenceResultSchema.parse(makeCIEvidence(JENKINS_PROVIDER_NAME, this.#clock(), {
+    return CILogEvidenceResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), {
       runId: input.runId,
       jobId: input.jobId,
       jobName: input.workflow,
@@ -105,7 +109,7 @@ export class JenkinsProvider implements CIProvider {
       steps: ["Inspect the bounded Jenkins failure evidence", "Reproduce the focused check before changing code"],
       runbook: `docs/ci-cd-runbook.md#${job.category}`,
     }])).values()];
-    return CIRemediationPlanResultSchema.parse(makeCIEvidence(JENKINS_PROVIDER_NAME, this.#clock(), {
+    return CIRemediationPlanResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), {
       runId: input.runId,
       dryRun: true,
       actions,
@@ -198,10 +202,10 @@ async function boundedText(response: Response): Promise<string> {
   return text;
 }
 
-function normalizeBuild(raw: JsonRecord, repository: string, workflow: string): CIWorkflowRun {
-  const number = raw.number;
-  const id = typeof number === "number" || typeof number === "string" ? String(number) : "";
-  if (!/^\d{1,20}$/.test(id)) throw new CIProviderError("malformed");
+function normalizeBuild(raw: JsonRecord, repository: string, workflow: string, requestedRunId?: string): CIWorkflowRun {
+  const nativeId = raw.number ?? raw.id ?? requestedRunId;
+  const id = typeof nativeId === "number" || typeof nativeId === "string" ? String(nativeId) : "";
+  if (!CIProviderNativeIdSchema.safeParse(id).success) throw new CIProviderError("malformed");
   const building = raw.building === true;
   const result = raw.result;
   const conclusion = building ? null : result === "SUCCESS" ? "success" : result === "ABORTED" ? "cancelled" : result === null || result === undefined ? "unknown" : "failure";

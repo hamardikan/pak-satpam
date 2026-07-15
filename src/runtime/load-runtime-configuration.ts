@@ -20,6 +20,8 @@ import type { CIProviderRuntimeMetadata, CIService, CIProviderType } from "../ci
 import { GitHubActionsProvider } from "../providers/github-actions-provider.js";
 import { GitHubAppTokenProvider } from "../providers/github-app-token-provider.js";
 import { MappedGitHubAppTokenProvider } from "../providers/mapped-github-app-token-provider.js";
+import { CIProviderRegistry } from "../providers/ci-provider-registry.js";
+import { READ_ONLY_CI_PROVIDER_CAPABILITIES, APPROVAL_GATED_CI_PROVIDER_CAPABILITIES } from "../domain/ci-provider-contracts.js";
 
 const MAX_CONFIG_BYTES = 256 * 1_024;
 
@@ -423,6 +425,7 @@ function buildCIConfiguration(
       : new JenkinsProvider({
           baseUrl: selected.configuration.jenkins.base_url,
           fetch: options.fetch,
+          providerName: selected.metadata.name,
           ...(options.clock === undefined ? {} : { clock }),
           maxFreshnessMs: configuration.max_freshness_seconds * 1_000,
         })
@@ -434,6 +437,7 @@ function buildCIConfiguration(
             tokenFile: selected.configuration.bitbucket.token_file,
             ...(selected.configuration.bitbucket.username === undefined ? {} : { username: selected.configuration.bitbucket.username }),
             fetch: options.fetch,
+            providerName: selected.metadata.name,
             ...(options.clock === undefined ? {} : { clock }),
             maxFreshnessMs: configuration.max_freshness_seconds * 1_000,
           })
@@ -450,10 +454,19 @@ function buildCIConfiguration(
           return new ApprovalTokenService({ key, clock, audit });
         })()
     : undefined;
+  const providerRegistry = new CIProviderRegistry([{
+    name: selected.metadata.name,
+    kind: selected.metadata.type,
+    capabilities: selected.metadata.capabilities.rerun
+      ? APPROVAL_GATED_CI_PROVIDER_CAPABILITIES
+      : READ_ONLY_CI_PROVIDER_CAPABILITIES,
+    provider,
+  }]);
   return {
     provider,
     policy: createCIAllowlist(Object.fromEntries(configuration.allowlist.map((entry) => [entry.repo, entry.workflows]))),
     runtimeMetadata: selected.metadata,
+    providerRegistry,
     ...(approval === undefined ? {} : { approval }),
   };
 }
@@ -525,6 +538,7 @@ function buildGitHubProvider(
     ...(options.clock === undefined ? {} : { clock }),
     apiBaseUrl: configuration.github.api_base_url,
     maxFreshnessMs: maxFreshnessSeconds * 1_000,
+    providerName: configuration.name,
   });
 }
 

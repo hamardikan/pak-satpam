@@ -172,6 +172,7 @@ describe("CI MCP contract", () => {
       const result = CallToolResultSchema.parse(await client.callTool({ name, arguments: arguments_ }));
       expect(result.isError, name).not.toBe(true);
       expect(JSON.stringify(result)).not.toContain("secret");
+      expect(JSON.stringify(result)).toContain('"providerClass":"github-test"');
     }
     await client.close();
     await server.close();

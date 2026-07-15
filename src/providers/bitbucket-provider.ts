@@ -17,6 +17,7 @@ import {
   type CIWorkflowStatusResult,
   type CIWorkflowRun,
 } from "../domain/ci-schemas.js";
+import { CIProviderNativeIdSchema } from "../domain/ci-schemas.js";
 import { redactText } from "../ci/redaction.js";
 import { CIProviderError, type CIProvider } from "./ci-provider.js";
 
@@ -49,6 +50,7 @@ export interface BitbucketProviderOptions {
   readonly fetch: typeof globalThis.fetch;
   readonly clock?: () => Date;
   readonly maxFreshnessMs?: number;
+  readonly providerName?: string;
 }
 
 /** Read-only Bitbucket Cloud adapter. Bitbucket Data Center is not supported. */
@@ -58,6 +60,7 @@ export class BitbucketProvider implements CIProvider {
   readonly #fetch: typeof globalThis.fetch;
   readonly #clock: () => Date;
   readonly #maxFreshnessMs: number;
+  readonly #providerName: string;
 
   constructor(options: BitbucketProviderOptions) {
     this.#baseUrl = trustedBaseUrl(options.baseUrl);
@@ -65,12 +68,13 @@ export class BitbucketProvider implements CIProvider {
     this.#fetch = options.fetch;
     this.#clock = options.clock ?? (() => new Date());
     this.#maxFreshnessMs = options.maxFreshnessMs ?? 5 * 60_000;
+    this.#providerName = options.providerName ?? BITBUCKET_PROVIDER_NAME;
   }
 
   async getWorkflowStatus(input: CIWorkflowStatusInput): Promise<CIWorkflowStatusResult> {
     const raw = await this.pipeline(input.repo, input.runId);
     const run = normalizePipeline(raw, input.repo, input.workflow, input.runId);
-    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(BITBUCKET_PROVIDER_NAME, this.#clock(), { run }, {
+    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { run }, {
       freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs),
     }));
   }
@@ -95,7 +99,7 @@ export class BitbucketProvider implements CIProvider {
     const rawLines = raw.split(/\r?\n/).filter((line) => line.length > 0);
     const selected = rawLines.slice(0, Math.min(input.maxLines, 200)).map((line, index) => ({ sequence: index + 1, ...redactText(line) }));
     const lines = selected.map(({ sequence, text }) => ({ sequence, text }));
-    return CILogEvidenceResultSchema.parse(makeCIEvidence(BITBUCKET_PROVIDER_NAME, this.#clock(), {
+    return CILogEvidenceResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), {
       runId: input.runId,
       jobId: input.jobId,
       jobName: input.workflow,
@@ -113,7 +117,7 @@ export class BitbucketProvider implements CIProvider {
       steps: ["Inspect the bounded Bitbucket failure evidence", "Reproduce the focused check before changing code"],
       runbook: `docs/ci-cd-runbook.md#${job.category}`,
     }])).values()];
-    return CIRemediationPlanResultSchema.parse(makeCIEvidence(BITBUCKET_PROVIDER_NAME, this.#clock(), { runId: input.runId, dryRun: true, actions }, {
+    return CIRemediationPlanResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { runId: input.runId, dryRun: true, actions }, {
       freshness: analysis.freshness,
       warnings: analysis.warnings,
       redactionsApplied: analysis.redactionsApplied,
@@ -241,7 +245,7 @@ function repositoryPath(repository: string): string {
 function normalizePipeline(raw: JsonRecord, repository: string, workflow: string, requestedRunId?: string): CIWorkflowRun {
   const buildNumber = raw.build_number;
   const id = typeof buildNumber === "number" || typeof buildNumber === "string" ? String(buildNumber) : requestedRunId ?? "";
-  if (!/^\d{1,20}$/.test(id)) throw new CIProviderError("malformed");
+  if (!CIProviderNativeIdSchema.safeParse(id).success) throw new CIProviderError("malformed");
   const state = raw.state !== null && typeof raw.state === "object" && !Array.isArray(raw.state) ? raw.state as JsonRecord : {};
   const stateName = typeof state.name === "string" ? state.name.toUpperCase() : "UNKNOWN";
   const result = state.result !== null && typeof state.result === "object" && !Array.isArray(state.result) ? state.result as JsonRecord : {};

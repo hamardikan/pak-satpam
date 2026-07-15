@@ -28,8 +28,14 @@ export const CIWorkflowSchema = z
   .min(1)
   .max(200)
   .regex(/^[A-Za-z0-9_./@-]+$/);
-export const CIRunIdSchema = z.string().regex(/^\d{1,20}$/);
-export const CIJobIdSchema = z.string().regex(/^\d{1,20}$/);
+/** Provider-native IDs stay path-safe while allowing strings and UUID forms. */
+export const CIProviderNativeIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^(?:[A-Za-z0-9][A-Za-z0-9._:{}-]*|\{[A-Fa-f0-9-]{8,64}\})$/);
+export const CIRunIdSchema = CIProviderNativeIdSchema;
+export const CIJobIdSchema = CIProviderNativeIdSchema;
 export const CIRequestIdSchema = z
   .string()
   .min(1)

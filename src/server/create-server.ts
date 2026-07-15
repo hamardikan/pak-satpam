@@ -215,8 +215,10 @@ function registerCITools(server: McpServer, ci: CIService, clock: Clock): void {
   if (metadata === undefined) return;
   const provider = ci.provider;
   const providerLabel = `${metadata.name} (${metadata.type})`;
+  const readCapability = ci.providerRegistry?.supports(metadata.name, "read") ?? metadata.capabilities.read;
+  const rerunCapability = ci.providerRegistry?.supports(metadata.name, "rerun") ?? metadata.capabilities.rerun;
 
-  if (metadata.capabilities.read) {
+  if (readCapability) {
     server.registerTool(
       "ci.workflow_status",
       {
@@ -259,7 +261,7 @@ function registerCITools(server: McpServer, ci: CIService, clock: Clock): void {
     );
   }
 
-  if (metadata.capabilities.read && metadata.capabilities.rerun && metadata.type === "github" && ci.approval !== undefined) {
+  if (readCapability && rerunCapability && metadata.type === "github" && ci.approval !== undefined) {
     server.registerTool(
       "ci.rerun_failed_workflow",
       {
@@ -281,8 +283,14 @@ function registerCITools(server: McpServer, ci: CIService, clock: Clock): void {
 function validRuntimeMetadata(ci: CIService): CIProviderRuntimeMetadata | undefined {
   const metadata = ci.runtimeMetadata;
   if (metadata === undefined || metadata.name.trim().length === 0) return undefined;
-  const providerType = providerTypeForImplementation(ci.provider);
-  if (providerType === undefined || providerType !== metadata.type) return undefined;
+  if (ci.providerRegistry !== undefined) {
+    const registration = ci.providerRegistry.get(metadata.name);
+    if (registration === undefined || registration.provider !== ci.provider || registration.kind !== metadata.type) return undefined;
+    if (registration.capabilities.read !== metadata.capabilities.read || (registration.capabilities.rerun === "approval-gated") !== metadata.capabilities.rerun) return undefined;
+  } else {
+    const providerType = providerTypeForImplementation(ci.provider);
+    if (providerType === undefined || providerType !== metadata.type) return undefined;
+  }
   if (metadata.capabilities.read !== true && metadata.capabilities.rerun !== true) return undefined;
   if (metadata.approvalRequired !== (metadata.type === "github" && metadata.capabilities.rerun)) return undefined;
   return metadata;
@@ -311,7 +319,7 @@ async function ciRead<TInput extends CIWorkflowStatusInput | CIFailedJobAnalysis
     return ciError("ci_policy_denied");
   }
   try {
-    const result = schema.parse(await operation());
+    const result = schema.parse(withConfiguredProviderIdentity(await operation(), ci.runtimeMetadata?.name));
     ci.approval?.audit({ ...auditBase, outcome: "success" });
     return structuredResult(result);
   } catch (error) {
@@ -353,10 +361,10 @@ async function rerunFailedWorkflow(ci: CIService, input: CIRerunFailedWorkflowIn
     }
     approvalService.audit({ event: "ci_rerun", outcome: "action_started", repo: input.repo, workflow: input.workflow, runId: input.runId, requestId: input.requestId, at: clock().toISOString(), action: "rerun-failed-jobs" });
     const result = await ci.provider.rerunFailedWorkflow(input);
-    const normalized = CIRerunFailedWorkflowResultSchema.parse({
+    const normalized = CIRerunFailedWorkflowResultSchema.parse(withConfiguredProviderIdentity({
       ...result,
       data: { ...result.data, requestId: input.requestId },
-    });
+    }, ci.runtimeMetadata?.name));
     approvalService.audit({ event: "ci_rerun", outcome: "success", repo: input.repo, workflow: input.workflow, runId: input.runId, requestId: input.requestId, at: clock().toISOString(), action: "rerun-failed-jobs" });
     return structuredResult(normalized);
   } catch (error) {
@@ -387,6 +395,11 @@ function structuredResult(result: Record<string, unknown>): CallToolResult {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
   };
+}
+
+function withConfiguredProviderIdentity(value: unknown, providerName: string | undefined): unknown {
+  if (providerName === undefined || value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  return { ...(value as Record<string, unknown>), providerClass: providerName };
 }
 
 async function safeProviderResult(

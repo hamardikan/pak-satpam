@@ -53,7 +53,7 @@ describe("Jenkins read-only CI adapter", () => {
     const result = await adapter.getWorkflowStatus({ repo: "owner/repo", workflow: "folder/backend", runId: "7" });
 
     expect(result.providerClass).toBe("jenkins");
-    expect(fetch.mock.calls[0]?.[0]).toBe("https://jenkins.local/reverse-proxy/job/folder/job/backend/job/main/7/api/json");
+    expect(String(fetch.mock.calls[0]?.[0])).toBe("https://jenkins.local/reverse-proxy/job/folder/job/backend/job/main/7/api/json");
     expect(fetch.mock.calls[0]?.[1]?.headers).toMatchObject({
       authorization: `Basic ${Buffer.from("ci-reader:jenkins-api-token-only-in-header").toString("base64")}`,
     });
@@ -62,6 +62,21 @@ describe("Jenkins read-only CI adapter", () => {
     const unsafe = new JenkinsProvider({ baseUrl: "https://jenkins.local/", fetch });
     await expect(unsafe.getWorkflowStatus({ repo: "owner/repo", workflow: "folder//backend", runId: "7" })).rejects.toMatchObject({ code: "malformed" });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts a provider-native string build identifier", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
+      number: "build-main-7",
+      result: "SUCCESS",
+      building: false,
+      timestamp: NOW.getTime(),
+      duration: 0,
+    })));
+    const adapter = new JenkinsProvider({ baseUrl: "https://jenkins.local/", fetch, clock: () => NOW });
+
+    await expect(adapter.getWorkflowStatus({ repo: "owner/repo", workflow: "ci", runId: "build-main-7" })).resolves.toMatchObject({
+      data: { run: { id: "build-main-7" } },
+    });
   });
 
   it.each([
@@ -132,6 +147,21 @@ describe("Bitbucket read-only CI adapter", () => {
     });
     await expect(adapter.getWorkflowStatus({ repo: "owner/repo", workflow: "pipeline", runId: "9" })).resolves.toMatchObject({
       data: { run: { status: "completed", conclusion: "unknown" } },
+    });
+  });
+
+  it("accepts a Bitbucket Cloud UUID pipeline identifier", async () => {
+    const pipelineId = "{550e8400-e29b-41d4-a716-446655440000}";
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({
+      state: { name: "COMPLETED", result: { name: "SUCCESSFUL" } },
+      created_on: "2026-07-10T00:00:00Z",
+      completed_on: "2026-07-10T00:01:00Z",
+      target: { ref_name: "main", commit: { hash: "d".repeat(40) } },
+    })));
+    const adapter = new BitbucketProvider({ baseUrl: "https://api.bitbucket.org/2.0", token: "reader:token-value", fetch, clock: () => NOW });
+
+    await expect(adapter.getWorkflowStatus({ repo: "owner/repo", workflow: "pipeline", runId: pipelineId })).resolves.toMatchObject({
+      data: { run: { id: pipelineId, conclusion: "success" } },
     });
   });
 

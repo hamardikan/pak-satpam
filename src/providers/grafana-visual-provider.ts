@@ -157,7 +157,7 @@ function allowlistedRenderUrl(
       : routePath,
     basePath !== "" && (route === basePath || route.startsWith(`${basePath}/`)) ? new URL(baseUrl.origin) : baseUrl,
   );
-  const renderPrefix = `${basePath === "" ? "" : `${basePath}/`}render/`;
+  const renderPrefix = `${basePath === "" ? "/" : `${basePath}/`}render/`;
   if (url.origin !== baseUrl.origin || !url.pathname.startsWith(renderPrefix)) throw new Error("invalid route");
   const configuredKeys = [...url.searchParams.keys()];
   if (
