@@ -1,99 +1,91 @@
 # Architecture
 
-## Design Goals
+Pak Satpam is an MCP evidence boundary, not an agent platform. It accepts
+structured requests from an external AI client and returns bounded evidence
+from operator-configured providers.
 
-- Work with multiple AI clients without embedding an LLM.
-- Keep the default runtime read-only.
-- Support Grafana and Prometheus-compatible metrics backends.
-- Return small, deterministic evidence rather than raw backend payloads.
-- Run locally through stdio or remotely through authenticated Streamable HTTP.
-- Keep provider credentials outside prompts, tool results, logs, and storage.
-- Keep CI provider adapters portable and the rerun action deny-by-default.
+## Domain-Driven Design
 
-## Runtime
+| Bounded context | Owns | Does not own |
+| --- | --- | --- |
+| Protocol | MCP lifecycle, stdio and Streamable HTTP, tool registration, schemas, errors | provider credentials or provider response shapes |
+| Policy | provider/repository/workflow/ref/dashboard/query allowlists and capability gates | LLM decisions or deployment policy outside this process |
+| Evidence | normalized health, alerts, metrics, CI, SCM, telemetry, freshness, truncation, redaction, digests | raw provider payloads |
+| Provider adapters | HTTP paths, provider authentication, provider-native normalization, provider failures | MCP semantics or arbitrary caller URLs |
+| CI operations | status, failed-job analysis, redacted logs, dry-run plans, bounded failure analysis, approval-gated GitHub rerun | shell, source mutation, deploy, dispatch, cancel, arbitrary rerun |
+| Observer companion | bounded poll/webhook intake, dedupe, stale suppression, signed internal delivery, metadata-only state | MCP hosting, chat, LLM calls, reruns, source writes |
 
-```text
-                         +----------------------+
-                         | AI client / agent    |
-                         +----------+-----------+
-                                    |
-                         stdio or Streamable HTTP
-                                    |
-                         +----------v-----------+
-                         | MCP transport        |
-                         +----------+-----------+
-                                    |
-                         +----------v-----------+
-                         | Tool application     |
-                         | - validate            |
-                         | - authorize           |
-                         | - bound               |
-                         | - normalize           |
-                         | - redact              |
-                         +-----+------------+----------------+
-                               |            |                |
-                  +------------v--+  +------v-----------+ +--v----------------+
-                  | Grafana port  |  | Metrics port     | | CI provider port  |
-                  +------------+--+  +------+-----------+ +--+----------------+
-                               |            |                |
-                         Grafana API   Prometheus API    GitHub Actions API
-```
+## Runtime Shape
 
-## Bounded Contexts
+~~~text
+AI client / Hermes / desktop MCP client
+                 |
+                 v
+       stdio or private Streamable HTTP
+                 |
+                 v
+       MCP application and tool schemas
+                 |
+        validate -> authorize -> bound
+                 |
+          normalize -> redact
+                 |
+     +-----------+-----------+-----------+
+     |                       |           |
+observability             CI/SCM      metadata
+  providers               adapters      audit
+     |                       |
+Grafana and metrics     GitHub, Jenkins,
+alerts                  Bitbucket Cloud
+~~~
 
-### Protocol
+The stdio entrypoint uses a deterministic local provider. The private HTTP
+entrypoint loads a strict version 1 YAML configuration and file-injected
+credentials. The same application contract is used by the OCI image.
 
-Owns MCP lifecycle, tool registration, transport behavior, errors, and client
-compatibility. It does not own provider credentials or observability semantics.
+## Evidence Flow
 
-### Evidence
+1. The client selects logical services, queries, dashboards, repositories, refs,
+   workflows, or provider-native IDs.
+2. Schemas reject unknown fields, arbitrary URLs, invalid IDs, unallowlisted
+   resources, and over-budget requests.
+3. The adapter calls only its configured provider origin/path and rejects
+   redirects or mismatched origins.
+4. The adapter normalizes provider data, redacts secret-like text, suppresses
+   binary or over-budget content, and records freshness/truncation.
+5. The server returns the version 1.0 evidence envelope. Provider text and
+   rendered pixels remain untrusted data.
+6. The external agent decides how to explain evidence. Pak Satpam does not infer
+   causality or execute remediation.
 
-Owns normalized health, alert, metric, and incident-context schemas. Evidence
-records observation time, provider class, truncation, redaction, and freshness.
+## CI Event Loop
 
-### Provider Adapters
+~~~text
+observe -> classify -> bounded redacted evidence -> dry-run plan
+       -> explicit one-time approval -> rerun failed jobs only
+       -> observe the follow-up run
+~~~
 
-Owns Grafana and Prometheus-compatible HTTP behavior. Adapters implement ports;
-they do not expose provider response bodies directly to MCP clients.
+The observer may discover terminal runs by polling or a verified GitHub webhook,
+but it never performs the approval or rerun. A failed follow-up is a new
+observation and does not trigger another action automatically.
 
-### Policy
+## External Boundary
 
-Owns configured providers, datasource allowlists, time ranges, query deadlines,
-series limits, output limits, and tool availability.
-
-### CI Operations
-
-Owns provider-neutral run/job schemas, deterministic failure classification,
-log redaction, repository/workflow allowlists, approval verification, replay
-state, and metadata-only audit events. GitHub App authentication is an adapter;
-the domain does not depend on GitHub response shapes. The rerun port exposes
-only `rerun-failed-jobs` and cannot dispatch, cancel, deploy, or write source.
-
-### CI Observer Companion
-
-The optional observer is a separate process packaged with the same npm and OCI
-artifacts. It polls exact repository/workflow allowlists through the CI adapter,
-persists only private metadata-only cursor/lease/dedupe state, and hands signed
-events to an operator-configured internal agent route. It never hosts MCP,
-owns chat delivery, or invokes the approval-gated rerun operation.
+Hermes or another AI client owns prompts, conversation state, and chat delivery.
+The observer sends only signed, bounded internal events to operator-configured
+success and analysis routes. Those routes may cause an external agent to call
+Pak Satpam through MCP. No inbound MCP bearer token is forwarded to a provider,
+Hermes, or another MCP server.
 
 ## Non-Responsibilities
 
-- Public webhook/event ingestion.
-- Discord or other chat gateways.
-- LLM selection or prompting.
-- CI/CD mutations other than the optional approved failed-job rerun.
-- Shell or script execution.
-- Infrastructure mutation.
-- Secret management products.
+Pak Satpam does not own public webhook ingress, OAuth authorization servers,
+tenant management, Discord/chat gateways, LLM selection, secret management,
+shell execution, infrastructure mutation, deployment, alert mutation, dashboard
+mutation, workflow dispatch/cancel, or source writing. Those concerns belong to
+the deployment or client environment and require separate review.
 
-Chat delivery, LLM prompting, credentials, network placement, and deployment
-remain owned by the client agent or deployment environment. The optional
-observer owns only bounded polling and signed internal event handoff.
-
-## Technology Direction
-
-The implementation uses TypeScript on Node.js 22 and the pinned official MCP
-SDK. It packages as an npm CLI and non-root OCI image, with stdio and stateless
-Streamable HTTP entry points sharing the same tool application. A language
-change requires an ADR and equivalent compatibility tests.
+The public package owns schemas, adapters, transports, tests, and packaging.
+A private deployment owns network bindings, credentials, exact allowlists,
+resource limits, observer routes, lifecycle, and rollback.

@@ -46,9 +46,14 @@ required=(
   src/providers/mapped-github-app-token-provider.ts
   src/visuals/synthetic-renderer.ts
   scripts/container-smoke.sh
+  scripts/container-stdio-smoke.mjs
+  scripts/container-runtime-smoke.sh
   scripts/assert-tool-surface.mjs
   scripts/http-smoke.mjs
   scripts/package-smoke.mjs
+  scripts/prepare-release.mjs
+  scripts/validate-package-metadata.mjs
+  scripts/verify-published-image.mjs
   ci/build-multiarch.sh
 )
 
@@ -97,7 +102,26 @@ do
   done < <(git ls-files -z --cached --others --exclude-standard)
 done
 
-ruby -e 'require "yaml"; YAML.safe_load(File.read(".github/workflows/validate.yml"), aliases: true)'
+for workflow in .github/workflows/*.yml; do
+  ruby -e 'require "yaml"; YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)' "$workflow"
+done
+
+if grep -REq 'uses:[[:space:]]+[^@]+@(main|master|v[0-9])([[:space:]]|$)' .github/workflows; then
+  echo "unpinned GitHub Action reference detected" >&2
+  exit 1
+fi
+
+while IFS= read -r action; do
+  if ! [[ "$action" =~ uses:[[:space:]]+[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+    echo "GitHub Action must be pinned to a full commit SHA: $action" >&2
+    exit 1
+  fi
+done < <(grep -REho 'uses:[[:space:]]+[^[:space:]]+' .github/workflows)
+
+if grep -Eq 'npm publish|docker push|push:[[:space:]]*true' .github/workflows/validate.yml; then
+  echo "publishing operation detected in validation workflow" >&2
+  exit 1
+fi
 
 python3 - <<'PY'
 import re

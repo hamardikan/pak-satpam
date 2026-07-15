@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CIProviderNameSchema } from "./ci-provider-contracts.js";
 
 export const CI_SCHEMA_VERSION = "1.0" as const;
 
@@ -14,7 +15,9 @@ export const CICategorySchema = z.enum([
 ]);
 export type CICategory = z.infer<typeof CICategorySchema>;
 
-export const CIProviderClassSchema = z.string().min(1).max(64).regex(/^[a-z][a-z0-9-]*$/);
+/** Legacy wire field kept opaque; registry identity is name plus kind. */
+export const CIProviderClassSchema = CIProviderNameSchema;
+export type CIProviderClass = z.infer<typeof CIProviderClassSchema>;
 export const CIRepositorySchema = z
   .string()
   .min(3)
@@ -25,8 +28,14 @@ export const CIWorkflowSchema = z
   .min(1)
   .max(200)
   .regex(/^[A-Za-z0-9_./@-]+$/);
-export const CIRunIdSchema = z.string().regex(/^\d{1,20}$/);
-export const CIJobIdSchema = z.string().regex(/^\d{1,20}$/);
+/** Provider-native IDs stay path-safe while allowing strings and UUID forms. */
+export const CIProviderNativeIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^(?:[A-Za-z0-9][A-Za-z0-9._:{}-]*|\{[A-Fa-f0-9-]{8,64}\})$/);
+export const CIRunIdSchema = CIProviderNativeIdSchema;
+export const CIJobIdSchema = CIProviderNativeIdSchema;
 export const CIRequestIdSchema = z
   .string()
   .min(1)
@@ -190,7 +199,7 @@ export function classifyFailure(...parts: readonly string[]): CICategory {
 }
 
 export function makeCIEvidence<T>(
-  providerClass: string,
+  providerClass: CIProviderClass,
   observedAt: Date,
   data: T,
   options: { freshness?: z.infer<typeof CIFreshnessSchema>; truncated?: boolean; redactionsApplied?: boolean; warnings?: readonly { code: string; message: string }[] } = {},

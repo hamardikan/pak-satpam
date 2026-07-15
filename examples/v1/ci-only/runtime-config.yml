@@ -1,0 +1,20 @@
+version: 1
+profile: ci-only
+ci:
+  enabled: true
+  provider: github
+  allowlist:
+    - repo: ORG/REPOSITORY
+      workflows: [ci.yml]
+  github:
+    api_base_url: https://api.github.com
+    app:
+      app_id_file: /run/secrets/github-app-id
+      pem_key_file: /run/secrets/github-app-key
+      installations:
+        - owner: ORG
+          installation_id_file: /run/secrets/github-installation-id
+  approval:
+    key_file: /run/secrets/approval-key
+    replay_file: /run/runtime/state/approval-replay.json
+    audit_file: /run/runtime/state/approval-audit.jsonl

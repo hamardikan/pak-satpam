@@ -1,68 +1,68 @@
-# Test Strategy
+# Test And Verification Strategy
 
-Tests scale with the trust boundary. A green unit suite is not enough to claim
-remote or provider compatibility.
+Tests scale with the trust boundary. A green unit suite proves source behavior;
+it does not prove that an external provider, public endpoint, or private
+deployment is live.
 
-## Fast Tests
+## Local Gates
 
-- Domain unit tests for evidence and policy behavior.
-- JSON schema contract tests for every tool and result.
-- Transport-independent application tests.
-- Redaction fixtures with synthetic secrets and prompt injection.
-- Property tests for bounds, truncation, and canonical serialization.
+Run the repository-defined aggregate gate:
 
-## Provider Integration
+~~~bash
+npm run validate
+~~~
 
-A pinned disposable Compose stack provides Grafana and VictoriaMetrics with
-synthetic metrics and alerts. Tests prove startup health, normal queries,
-timeouts, malformed responses, large result truncation, and teardown including
-volumes. No external credentials or production data are used.
+It runs typecheck, all Vitest tests, build, stdio smoke, MCP Inspector discovery,
+installed-package smoke, high-severity npm audit, foundation checks, forbidden
+private/secret-surface checks, and local Markdown link validation.
 
-The disposable stack also exercises a pinned Grafana Image Renderer. Synthetic
-dashboards verify nonblank PNG output, dimensions, time ranges, size limits,
-safe variables, renderer failure, and teardown without production data.
+Run the foundation/link gate independently when editing documentation:
 
-## Transport Compatibility
+~~~bash
+./ci/validate-foundation.sh
+~~~
 
-- MCP Inspector initialization, discovery, and tool calls.
-- Two independent stdio clients.
-- Two authenticated concurrent Streamable HTTP clients.
-- Cancellation, reconnect, malformed sessions, and protocol-version mismatch.
+The public workflow adds non-publishing multi-architecture Buildx verification,
+a local image build and smoke test, and per-platform OCI stdio and HTTP runtime
+smoke for linux/amd64 and linux/arm64. The workflow does not publish or deploy.
+
+## Contract Coverage
+
+- Zod schemas reject unknown fields, malformed IDs, unallowlisted resources, and
+  over-budget requests.
+- Provider tests cover GitHub Actions, Jenkins, Bitbucket Cloud, SCM selectors,
+  provider-native IDs, authentication boundaries, response normalization, and
+  reverse-proxy URL joining.
+- CP3 tests cover the direct SCM contract, all six budgets, digest stability,
+  provider capability registration, and non-causal SCM/telemetry correlation.
+- Observer tests cover signed webhooks, polling overlap, bounded pagination,
+  lease/restart recovery, webhook/poll dedupe, stale suppression, route
+  selection, delivery retry, payload truncation, and metadata-only state.
+- Transport tests cover stdio, Streamable HTTP, bearer denial, Host denial,
+  MCP initialization, tool discovery, and read-only calls.
+- Package and metadata tests cover npm identity, aliases, OCI identity,
+  Inspector discovery, installed-package launch, strict semantic version and
+  changelog consistency, immutable OCI tags, and post-publish attestation
+  verification wiring.
 
 ## Security Negatives
 
-- Unknown provider origins and redirect-based SSRF.
-- DNS rebinding, multi-address DNS, alternate IP forms, IPv4-mapped IPv6,
-  denied address classes, and proxy-environment bypass attempts.
-- Secret values in labels, annotations, errors, and nested objects.
-- Prompt injection in every provider-controlled string.
-- Missing, expired, wrong-issuer, wrong-audience, and wrong-scope tokens.
-- Missing or incorrect `WWW-Authenticate` resource metadata and scope
-  challenges.
-- Insufficient-scope responses missing `error="insufficient_scope"`, the
-  minimum `scope`, or `resource_metadata`.
-- Inbound MCP access-token sentinels appearing in provider requests, logs,
-  errors, evidence, or any outbound call.
-- Token in URI query string.
-- Invalid Origin and session replay.
-- Cross-client state and credential leakage.
-- Query timeout, range, series, output, concurrency, and rate-limit overflow.
-- Provider payload persistence and normal-log leakage.
-- Arbitrary render URLs, variables, external navigation, file URLs, unsupported
-  panels, redirects, oversized or blank images, and render concurrency limits.
-- Secret sentinels in rendered pixels or image bytes persisted to logs, evidence
-  files, or cross-principal caches.
-- CI log secrets, malformed provider data, unavailable GitHub, stale runs,
-  permission denial, policy rejection, duplicate approvals, replayed or expired
-  tokens, concurrent approval consumption, failed reruns, and incomplete audit
-  metadata.
-- Observer success/failure/cancelled/timed-out outcomes, signed route selection,
-  duplicate delivery, restart recovery, stale records, bounded pagination
-  truncation, GitHub/Hermes unavailability, provider quota errors, malformed
-  responses, payload truncation, and absence of raw log lines or credentials.
+Coverage includes DNS rebinding, multi-address DNS, redirect and proxy bypass,
+private address classes, credential/userinfo URLs, secret-like provider text,
+prompt injection, raw payload leakage, malformed responses, stale evidence,
+approval replay/expiry, duplicate delivery, and provider capability mismatch.
+It also checks that the inbound MCP bearer is not sent to providers.
+
+## Evidence Limits
+
+The tests assert the documented bounds for observability, CI logs, SCM bytes,
+files, hunks, lines, provider requests, duration, aggregate failure analysis,
+telemetry windows/items/samples, renderer output, observer pages/payloads/retries,
+and approval TTL. Truncation and unavailable evidence remain explicit.
 
 ## Live Shadow
 
-Live testing remains read-only. It starts on a private network, uses a scoped
-test principal, compares MCP evidence with direct operator-visible provider
-state, and verifies removal without touching provider configuration.
+Any live shadow must be read-only, private, scoped to synthetic or
+operator-approved resources, and compared with direct operator-visible provider
+state. It must not publish, deploy, alter provider configuration, or expose
+credentials.

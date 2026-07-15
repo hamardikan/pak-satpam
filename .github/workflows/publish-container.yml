@@ -20,17 +20,50 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 22.22.0
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npm run release:validate -- --require-built
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve release metadata
+        id: metadata
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "repository=ghcr.io/hmrdkn-labs/pak-satpam" >> "$GITHUB_OUTPUT"
+      - name: Reject existing immutable tags
+        env:
+          IMAGE: ghcr.io/hmrdkn-labs/pak-satpam
+          VERSION: ${{ steps.metadata.outputs.version }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          for tag in "$VERSION" "v$VERSION" "sha-$REVISION"; do
+            set +e
+            output="$(docker buildx imagetools inspect "$IMAGE:$tag" 2>&1)"
+            status=$?
+            set -e
+            if [ "$status" -eq 0 ]; then
+              echo "immutable tag already exists: $IMAGE:$tag" >&2
+              exit 1
+            fi
+            if ! grep -Eiq 'not found|manifest unknown|no such manifest|404' <<<"$output"; then
+              echo "could not prove immutable tag is absent: $IMAGE:$tag" >&2
+              exit 1
+            fi
+          done
       - name: Build and push multi-architecture image
         id: build
         uses: docker/build-push-action@1104d471370f9806843c095c1db02b5a90c5f8b6
@@ -39,8 +72,14 @@ jobs:
           file: Containerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          provenance: true
+          provenance: mode=max
           sbom: true
-          tags: ghcr.io/hmrdkn-labs/pak-satpam:sha-${{ github.sha }}
-      - name: Record immutable image reference
-        run: echo "image=ghcr.io/hmrdkn-labs/pak-satpam@${{ steps.build.outputs.digest }}"
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            VCS_REF=${{ github.sha }}
+          tags: |
+            ghcr.io/hmrdkn-labs/pak-satpam:${{ steps.metadata.outputs.version }}
+            ghcr.io/hmrdkn-labs/pak-satpam:v${{ steps.metadata.outputs.version }}
+            ghcr.io/hmrdkn-labs/pak-satpam:sha-${{ github.sha }}
+      - name: Verify published manifest and attestations
+        run: node scripts/verify-published-image.mjs ghcr.io/hmrdkn-labs/pak-satpam "${{ steps.build.outputs.digest }}" "${{ steps.metadata.outputs.version }}" "${{ github.sha }}"

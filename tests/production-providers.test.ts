@@ -184,6 +184,44 @@ describe("VictoriaMetricsProvider", () => {
     expect(String(fetch.mock.calls[0]?.[0])).toBe("https://vmalert.internal/api/v1/alerts");
   });
 
+  it("accepts a full vmalert alerts endpoint without duplicating its path", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      response({ status: "success", data: { alerts: [] } }),
+    );
+    const provider = new VictoriaMetricsProvider({
+      baseUrl: "https://metrics.internal",
+      alertsBaseUrl: "https://vmalert.internal/api/v1/alerts",
+      fetch,
+      queryTemplates: {},
+      serviceHealth: {},
+    });
+
+    await provider.activeAlerts({});
+
+    const requestUrl = new URL(String(fetch.mock.calls[0]?.[0]));
+    expect(requestUrl.origin).toBe("https://vmalert.internal");
+    expect(requestUrl.pathname).toBe("/api/v1/alerts");
+  });
+
+  it("preserves a reverse-proxy prefix for metrics and vmalert endpoint joins", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(response({ status: "success", data: { resultType: "vector", result: [] } }))
+      .mockResolvedValueOnce(response({ status: "success", data: { alerts: [] } }));
+    const provider = new VictoriaMetricsProvider({
+      baseUrl: "https://metrics.internal/prometheus/",
+      alertsBaseUrl: "https://metrics.internal/alerts/api/v1/alerts",
+      fetch,
+      queryTemplates: { "api-up": { expression: "up", labelKeys: [] } },
+      serviceHealth: {},
+    });
+
+    await provider.queryMetrics({ queryTemplate: "api-up" });
+    await provider.activeAlerts({});
+
+    expect(new URL(String(fetch.mock.calls[0]?.[0])).pathname).toBe("/prometheus/api/v1/query");
+    expect(new URL(String(fetch.mock.calls[1]?.[0])).pathname).toBe("/alerts/api/v1/alerts");
+  });
+
   it("returns schema-valid unknown evidence on timeout without exposing upstream errors", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation((_url, init) =>
       new Promise((_resolve, reject) => {
@@ -236,7 +274,7 @@ describe("GrafanaVisualProvider", () => {
       new Response(png, { headers: { "content-type": "image/png" } }),
     );
     const provider = new GrafanaVisualProvider({
-      baseUrl: "https://grafana.internal/",
+      baseUrl: "https://grafana.internal/grafana/",
       token: "grafana-secret-token",
       fetch,
       panels: { "service-overview:request-rate": "/render/d-solo/service-overview/requests?panelId=7" },
@@ -256,7 +294,7 @@ describe("GrafanaVisualProvider", () => {
     ).resolves.toMatchObject({ mimeType: "image/png", rawByteSize: png.byteLength, data: png });
 
     const [url, init] = fetch.mock.calls[0] ?? [];
-    expect(String(url)).toContain("/render/d-solo/service-overview/requests?");
+    expect(String(url)).toContain("/grafana/render/d-solo/service-overview/requests?");
     expect(String(url)).toContain("from=2026-07-09T23%3A00%3A00.000Z");
     expect(String(url)).toContain("to=2026-07-10T00%3A00%3A00.000Z");
     expect(String(url)).toContain("width=800");
@@ -265,6 +303,28 @@ describe("GrafanaVisualProvider", () => {
     expect(new URL(String(url)).searchParams.get("panelId")).toBe("7");
     expect(init?.headers).toMatchObject({ Authorization: "Bearer grafana-secret-token" });
     expect(init?.redirect).toBe("error");
+  });
+
+  it("fails closed when an allowlisted visual route points outside the configured origin", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const provider = new GrafanaVisualProvider({
+      baseUrl: "https://grafana.internal/grafana",
+      token: "grafana-secret-token",
+      fetch,
+      panels: { "service-overview:request-rate": "https://attacker.invalid/render/d-solo/service-overview/requests" },
+      dashboards: {},
+    });
+
+    await expect(provider.renderPanel({
+      dashboardId: "service-overview",
+      panelId: "request-rate",
+      from: RANGE.from,
+      to: RANGE.to,
+      width: 800,
+      height: 450,
+      theme: "dark",
+    })).rejects.toThrow("Visual route is not allowlisted");
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("refuses non-allowlisted routes and rejects non-PNG or oversized bodies without secret leakage", async () => {

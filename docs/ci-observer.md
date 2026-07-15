@@ -1,57 +1,86 @@
-# CI Observer Deployment Contract
+# CI Observer Contract
 
-The optional observer turns terminal GitHub Actions results into signed private
-events. It is a companion process, not an MCP tool and not a chat bot.
+The optional observer is a companion process, not an MCP tool, LLM, or chat bot.
+It turns allowlisted terminal GitHub Actions runs into signed internal events.
 
-```text
-GitHub Actions -> bounded GitHub App polling -> observer state/dedupe
-               -> success route (direct status delivery)
-               -> failure route (agent calls Pak Satpam read-only CI tools)
-```
+~~~text
+GitHub Actions -> bounded poll or verified workflow_run webhook
+               -> metadata-only lease/cursor/dedupe state
+               -> success route
+               -> failure analysis route
+                  (external agent may call Pak Satpam read tools)
+~~~
 
-## Required Runtime Inputs
+## Inputs
 
-- one exact repository/workflow allowlist;
-- a GitHub App ID and private key in regular `0600` files;
-- exact owner or repository installation ID mappings in `0600` files;
-- an HMAC key in a `0600` file;
-- a private writable state directory;
-- separate internal success and analysis URLs;
-- bounded poll, page, payload, retry, timeout, lease, and evidence limits.
+The strict version 1 observer file contains:
 
-Configuration is strict YAML. Unknown fields, duplicate repositories, duplicate
-workflows, non-private files, public HTTP destinations, wildcard trusted hosts,
-and unsupported GitHub API origins fail closed.
+- an exact repository/workflow allowlist;
+- GitHub App ID and private key files;
+- repository or owner installation ID files;
+- an HMAC key file;
+- optional GitHub webhook secret file;
+- a private writable metadata-only state file;
+- separate success/status and analysis URLs;
+- trusted internal hosts;
+- poll, payload, retry, timeout, lease, and health limits.
 
-## Runtime Behavior
+Every file is a regular 0600 file. Unknown fields, duplicate allowlist entries,
+public delivery destinations, wildcard trusted hosts, and unsupported API
+origins fail closed. Secret values are not persisted or emitted.
 
-The observer requests only completed workflow runs and rescans the newest
-bounded pages every poll. Durable seen records deduplicate repository, workflow,
-run ID, and attempt. This avoids a creation-time cursor missing a long-running
-workflow that completes later. A page window that remains truncated degrades
-health and is visible in metadata-only metrics.
+## Polling, Webhooks, And Dedupe
 
-Fresh success, skipped, neutral, and other non-analysis outcomes use the status
-route. Fresh failure, cancelled, timed-out, and action-required outcomes use
-the status route first and the analysis route second. Stale historical runs are
-recorded as suppressed for durable deduplication; they never call either route
-or failure-analysis providers. `observer_suppressed_total` exposes this
-suppression without creating notifications. The observer never invokes
-`rerun-failed-jobs`; an agent may request that action only through Pak Satpam's
-separate short-lived approval contract.
+Polling always checks the newest terminal page, then scans a bounded backlog using
+a cursor overlap. The default is a 30-second interval, 5-minute overlap,
+24-hour initial lookback, 100 runs per page, and two backlog pages. A long-running
+run that becomes terminal is therefore visible to the hot lane even if its
+creation timestamp predates the cursor.
 
-## Health And Metrics
+A verified GitHub workflow_run webhook is optional. It accepts only a signed
+workflow_run payload, a terminal run, and an allowlisted repository/workflow.
+Webhook and poll candidates share the event ID:
 
-When configured, `/healthz` returns sanitized observer counters and current
-health. `/metrics` exposes poll, delivery, error, outcome, target, and truncated
-target counters. Bind these endpoints only to a private operator-controlled
-interface. They contain no GitHub token, HMAC key, provider payload, raw log,
-or chat identity.
+~~~text
+repository:workflow:provider-native-run-id:run-attempt
+~~~
 
-## Deployment Ownership
+Duplicates in one poll, across pages, across webhook/poll paths, and across
+restarts are suppressed by durable metadata-only state. Delivery state is kept
+separately for the status and analysis routes so a successful status delivery
+does not hide a failed analysis delivery.
 
-The public package owns observer code and schemas. A private deployment owns
-network bindings, credentials, exact allowlists, internal agent routes,
-resource limits, restart policy, rollback, and evidence. Production images must
-be digest-pinned and the previous observer runtime must remain available for a
-bounded rollback rehearsal.
+## Stale Suppression
+
+A terminal run older than stale_after_ms is observed as stale and recorded as
+suppressed. Default stale_after_ms is one hour, with a schema maximum of seven
+days. Stale runs never call either delivery route or failure-analysis providers.
+Pagination truncation, provider failures, and delivery failures degrade health
+and do not silently advance the cursor.
+
+## Routes And Payloads
+
+Fresh successful, skipped, neutral, and other non-analysis outcomes use the
+success/status route. Fresh failure, cancelled, timed-out, and action-required
+outcomes use that route first and the analysis route second. The analysis
+payload contains bounded metadata, digests, classifications, provenance,
+runbook references, and optional bounded SCM/telemetry evidence. It never
+contains raw log lines or credentials.
+
+Delivery signs timestamp.body with HMAC-SHA256, sends a deterministic
+X-Request-ID, rejects redirects, and retries within configured attempts,
+backoff, and timeout limits. HTTPS is accepted; HTTP is limited to a Tailscale
+literal or explicitly trusted internal host.
+
+## Health And Rollback
+
+The optional health listener exposes sanitized /healthz and /metrics only.
+Defaults are five failed jobs, 80 log lines, 128 KiB payloads, four delivery
+attempts, 500 ms initial backoff, 10 seconds delivery timeout, and a 60-second
+lease. Poll/page/payload/retry values have strict schema maximums.
+
+Production deployment owns binding, credentials, allowlists, routes, restart
+policy, resource limits, digest pinning, and rollback. Roll back to the prior
+observer image/package with the same config and metadata state; do not delete
+state during a normal rollback. The private edge observer and Hermes route are
+not live merely because this companion is packaged.

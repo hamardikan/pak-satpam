@@ -16,12 +16,22 @@ import {
   type CIWorkflowStatusInput,
   type CIWorkflowStatusResult,
 } from "../domain/ci-schemas.js";
+import { CIProviderNativeIdSchema } from "../domain/ci-schemas.js";
+import {
+  ciProviderEndpointFromUrl,
+  normalizeCIProviderEndpoint,
+  resolveCIProviderUrl,
+  type CIProviderEndpoint,
+  type CIProviderName,
+  CIProviderNameSchema,
+} from "../domain/ci-provider-contracts.js";
 import { CIProviderError, type CIProvider, type CITokenProvider, type CIWorkflowRunListInput, type CIWorkflowRunListResult } from "./ci-provider.js";
 import { StaticGitHubTokenProvider } from "./github-app-token-provider.js";
 import { redactText } from "../ci/redaction.js";
 
 const GITHUB_API_VERSION = "2022-11-28";
 const MAX_RESPONSE_BYTES = 2 * 1_024 * 1_024;
+const GITHUB_PROVIDER_NAME = "github-actions" as const;
 
 export interface GitHubActionsProviderOptions {
   readonly token?: string;
@@ -29,17 +39,22 @@ export interface GitHubActionsProviderOptions {
   readonly writeTokenProvider?: CITokenProvider;
   readonly fetch: typeof globalThis.fetch;
   readonly clock?: () => Date;
+  /** GitHub API origin/base URL. Use endpoint for structured reverse-proxy configuration. */
   readonly apiBaseUrl?: string;
+  readonly endpoint?: CIProviderEndpoint;
   readonly maxFreshnessMs?: number;
+  readonly providerName?: CIProviderName;
 }
 
 export class GitHubActionsProvider implements CIProvider {
+  readonly ciProviderType = "github" as const;
   readonly #tokenProvider: CITokenProvider;
   readonly #writeTokenProvider: CITokenProvider | undefined;
   readonly #fetch: typeof globalThis.fetch;
   readonly #clock: () => Date;
-  readonly #apiBaseUrl: string;
+  readonly #apiEndpoint: CIProviderEndpoint;
   readonly #maxFreshnessMs: number;
+  readonly #providerName: string;
 
   constructor(options: GitHubActionsProviderOptions) {
     if (options.token === undefined && options.tokenProvider === undefined) throw new Error("GitHub token provider is required");
@@ -47,8 +62,9 @@ export class GitHubActionsProvider implements CIProvider {
     this.#writeTokenProvider = options.writeTokenProvider ?? (options.token === undefined ? undefined : this.#tokenProvider);
     this.#fetch = options.fetch;
     this.#clock = options.clock ?? (() => new Date());
-    this.#apiBaseUrl = trustedGitHubApiBase(options.apiBaseUrl);
+    this.#apiEndpoint = trustedGitHubApiEndpoint(options.apiBaseUrl, options.endpoint);
     this.#maxFreshnessMs = options.maxFreshnessMs ?? 5 * 60_000;
+    this.#providerName = CIProviderNameSchema.parse(options.providerName ?? GITHUB_PROVIDER_NAME);
   }
 
   async getWorkflowStatus(input: CIWorkflowStatusInput): Promise<CIWorkflowStatusResult> {
@@ -58,7 +74,7 @@ export class GitHubActionsProvider implements CIProvider {
     const value = await this.getJson(path, input.repo);
     const rawRun = input.runId === undefined ? firstRun(value) : value;
     const run = normalizeRun(rawRun, input.repo, input.workflow);
-    return CIWorkflowStatusResultSchema.parse(makeCIEvidence("github-actions", this.#clock(), { run }, { freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs) }));
+    return CIWorkflowStatusResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { run }, { freshness: freshness(run.updatedAt, this.#clock, this.#maxFreshnessMs) }));
   }
 
   async listWorkflowRuns(input: CIWorkflowRunListInput): Promise<CIWorkflowRunListResult> {
@@ -106,7 +122,7 @@ export class GitHubActionsProvider implements CIProvider {
     const selected = rawLines.slice(0, input.maxLines).map((line, index) => ({ sequence: index + 1, ...redactText(line) }));
     const lines = selected.map(({ sequence, text }) => ({ sequence, text }));
     const redactionsApplied = selected.some((line) => line.redacted);
-    return CILogEvidenceResultSchema.parse(makeCIEvidence("github-actions", this.#clock(), {
+    return CILogEvidenceResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), {
       runId: input.runId,
       jobId: input.jobId,
       jobName: `job-${input.jobId}`,
@@ -124,13 +140,13 @@ export class GitHubActionsProvider implements CIProvider {
       steps: remediationSteps(job.category),
       runbook: `docs/ci-cd-runbook.md#${job.category}`,
     }])).values()];
-    return CIRemediationPlanResultSchema.parse(makeCIEvidence("github-actions", this.#clock(), { runId: input.runId, dryRun: true, actions }, { freshness: analysis.freshness, warnings: analysis.warnings, redactionsApplied: analysis.redactionsApplied }));
+    return CIRemediationPlanResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { runId: input.runId, dryRun: true, actions }, { freshness: analysis.freshness, warnings: analysis.warnings, redactionsApplied: analysis.redactionsApplied }));
   }
 
   async rerunFailedWorkflow(input: { repo: string; workflow: string; runId: string }): Promise<CIRerunFailedWorkflowResult> {
     const response = await this.request(`/repos/${input.repo}/actions/runs/${input.runId}/rerun-failed-jobs`, "POST", input.repo);
     if (![200, 201, 202, 204].includes(response.status)) throw httpError(response.status);
-    return CIRerunFailedWorkflowResultSchema.parse(makeCIEvidence("github-actions", this.#clock(), { runId: input.runId, requestId: "operator-approved", accepted: true, action: "rerun-failed-jobs" }));
+    return CIRerunFailedWorkflowResultSchema.parse(makeCIEvidence(this.#providerName, this.#clock(), { runId: input.runId, requestId: "operator-approved", accepted: true, action: "rerun-failed-jobs" }));
   }
 
   private async getJson(path: string, repository: string): Promise<Record<string, unknown>> {
@@ -174,7 +190,7 @@ export class GitHubActionsProvider implements CIProvider {
       redirect,
       signal: AbortSignal.timeout(10_000),
     };
-    return this.#fetch(`${this.#apiBaseUrl}${path}`, init).catch(() => { throw new CIProviderError("unavailable"); });
+    return this.#fetch(resolveCIProviderUrl(this.#apiEndpoint, path).toString(), init).catch(() => { throw new CIProviderError("unavailable"); });
   }
 }
 
@@ -185,12 +201,16 @@ function isGitHubActionsLogHost(hostname: string): boolean {
     || normalized === "results-receiver.actions.githubusercontent.com"
     || normalized.endsWith(".blob.core.windows.net");
 }
-function trustedGitHubApiBase(value: string | undefined): string {
-  const url = new URL(value ?? "https://api.github.com");
-  if (url.protocol !== "https:" || url.hostname !== "api.github.com" || url.port !== "" || url.username !== "" || url.password !== "" || (url.pathname !== "/" && url.pathname !== "")) {
+function trustedGitHubApiEndpoint(baseUrl: string | undefined, endpoint: CIProviderEndpoint | undefined): CIProviderEndpoint {
+  if (baseUrl !== undefined && endpoint !== undefined) throw new Error("GitHub requires exactly one apiBaseUrl or endpoint");
+  const configured = endpoint === undefined
+    ? ciProviderEndpointFromUrl(baseUrl ?? "https://api.github.com")
+    : normalizeCIProviderEndpoint(endpoint);
+  const url = new URL(configured.origin);
+  if (url.protocol !== "https:" || url.hostname !== "api.github.com" || url.port !== "") {
     throw new Error("GitHub API base URL is not trusted");
   }
-  return "https://api.github.com";
+  return configured;
 }
 
 function encode(value: string): string { return encodeURIComponent(value); }
@@ -213,7 +233,7 @@ function normalizeRun(value: unknown, repository: string, workflow: string): CIW
   const id = typeof raw.id === "number" || typeof raw.id === "string" ? String(raw.id) : "";
   const status = raw.status;
   const conclusion = raw.conclusion === null ? null : raw.conclusion;
-  if (!/^\d{1,20}$/.test(id) || !["queued", "in_progress", "completed"].includes(String(status)) || (conclusion !== null && !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion)))) throw new CIProviderError("malformed");
+  if (!CIProviderNativeIdSchema.safeParse(id).success || !["queued", "in_progress", "completed"].includes(String(status)) || (conclusion !== null && !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion)))) throw new CIProviderError("malformed");
   const createdAt = new Date(stringField(raw, "created_at"));
   const updatedAt = new Date(stringField(raw, "updated_at"));
   const runAttempt = raw.run_attempt;
@@ -239,7 +259,7 @@ function normalizeJob(value: unknown) {
   const name = stringField(raw, "name");
   const status = raw.status;
   const conclusion = raw.conclusion;
-  if (!/^\d{1,20}$/.test(id) || !["queued", "in_progress", "completed"].includes(String(status)) || !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion))) throw new CIProviderError("malformed");
+  if (!CIProviderNativeIdSchema.safeParse(id).success || !["queued", "in_progress", "completed"].includes(String(status)) || !["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required"].includes(String(conclusion))) throw new CIProviderError("malformed");
   const steps = Array.isArray(raw.steps) ? raw.steps.flatMap((step) => {
     try { const value = record(step); return typeof value.name === "string" && value.conclusion !== "success" ? [value.name] : []; } catch { return []; }
   }) : [];

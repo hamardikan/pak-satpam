@@ -1,9 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApprovalTokenService, InMemoryApprovalAuditStore } from "../src/ci/approval.js";
 import { createCIAllowlist } from "../src/ci/policy.js";
+import type { CIService } from "../src/ci/service.js";
 import { GitHubActionsProvider } from "../src/providers/github-actions-provider.js";
 import { createCIServer, createObservabilityServer } from "../src/server/create-server.js";
 import { FakeObservabilityProvider } from "../src/providers/fake-provider.js";
@@ -16,17 +17,24 @@ const INPUT = {
 };
 const ACTION_BINDING = { ...INPUT, runAttempt: 1, headSha: "a".repeat(40) };
 
-function ci(fetch: typeof globalThis.fetch) {
+function ci(fetch: typeof globalThis.fetch, forensics?: CIService["forensics"]): CIService {
   return {
     provider: new GitHubActionsProvider({ token: "github-token-for-header", fetch, clock: () => NOW }),
     policy: createCIAllowlist({
       "owner/repo": ["goal14-controlled-fixture.yml"],
     }),
+    runtimeMetadata: {
+      name: "github-test",
+      type: "github",
+      capabilities: { read: true, rerun: true },
+      approvalRequired: true,
+    } as const,
     approval: new ApprovalTokenService({
       key: Buffer.from("c".repeat(32)),
       clock: () => NOW,
       audit: new InMemoryApprovalAuditStore(),
     }),
+    ...(forensics === undefined ? {} : { forensics }),
   };
 }
 
@@ -62,6 +70,7 @@ describe("CI MCP contract", () => {
       "ci.failed_job_analysis",
       "ci.log_evidence",
       "ci.remediation_plan",
+      "ci.failure_analysis",
       "ci.rerun_failed_workflow",
     ]);
     expect(result.tools.find((tool) => tool.name === "ci.rerun_failed_workflow")?.annotations).toMatchObject({
@@ -87,6 +96,7 @@ describe("CI MCP contract", () => {
       "ci.failed_job_analysis",
       "ci.log_evidence",
       "ci.remediation_plan",
+      "ci.failure_analysis",
       "ci.rerun_failed_workflow",
     ]);
     expect(result.tools.every((tool) => tool.name.startsWith("ci."))).toBe(true);
@@ -166,7 +176,36 @@ describe("CI MCP contract", () => {
       const result = CallToolResultSchema.parse(await client.callTool({ name, arguments: arguments_ }));
       expect(result.isError, name).not.toBe(true);
       expect(JSON.stringify(result)).not.toContain("secret");
+      expect(JSON.stringify(result)).toContain('"providerClass":"github-test"');
     }
+    await client.close();
+    await server.close();
+  });
+
+  it("registers optional SCM and telemetry tools only when capabilities are declared", async () => {
+    const configured = ci(viFetch([]), {
+      scm: { getChangeEvidence: vi.fn() },
+      telemetry: { getTelemetryCorrelation: vi.fn() },
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createCIServer({ ci: configured, clock: () => NOW });
+    const client = new Client({ name: "goal19-forensics-test", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.listTools();
+
+    expect(result.tools.map((tool) => tool.name)).toEqual([
+      "ci.workflow_status",
+      "ci.failed_job_analysis",
+      "ci.log_evidence",
+      "ci.remediation_plan",
+      "ci.failure_analysis",
+      "ci.scm_change_evidence",
+      "ci.telemetry_correlation",
+      "ci.rerun_failed_workflow",
+    ]);
+    expect(result.tools.filter((tool) => tool.name.includes("scm") || tool.name.includes("telemetry") || tool.name.includes("failure_analysis")).every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true);
     await client.close();
     await server.close();
   });
@@ -185,7 +224,7 @@ describe("CI MCP contract", () => {
       await client.connect(clientTransport);
       return { client, server };
     })();
-    const token = configured.approval.issue({ ...ACTION_BINDING, requestId: "rerun-1", ttlSeconds: 60 });
+    const token = configured.approval!.issue({ ...ACTION_BINDING, requestId: "rerun-1", ttlSeconds: 60 });
     const result = await client.callTool({
       name: "ci.rerun_failed_workflow",
       arguments: { ...ACTION_BINDING, requestId: "rerun-1", approvalToken: token },

@@ -27,6 +27,10 @@ const MAX_ALERTS = 100;
 const MAX_SERIES = 50;
 const MAX_SAMPLES_PER_SERIES = 1_440;
 const DEFAULT_TIMEOUT_MS = 5_000;
+const VMALERT_ALERTS_PATH = "/api/v1/alerts";
+const GRAFANA_ALERTMANAGER_ALERTS_PATH = "/api/alertmanager/grafana/api/v2/alerts";
+const PROMETHEUS_PROVIDER_CLASS = "prometheus-compatible" as const;
+const GRAFANA_ALERTMANAGER_PROVIDER_CLASS = "grafana-alertmanager" as const;
 
 export interface VictoriaMetricsQueryTemplate {
   /** Static PromQL owned by the deployment configuration. */
@@ -80,14 +84,21 @@ interface ParsedMetrics {
 export class VictoriaMetricsProvider implements ObservabilityProvider {
   readonly #options: VictoriaMetricsProviderOptions;
   private readonly baseUrl: URL;
-  private readonly alertsBaseUrl: URL;
+  private readonly alertsUrl: URL;
+  private readonly providerClass: "grafana-alertmanager" | "prometheus-compatible";
   private readonly clock: Clock;
   private readonly timeoutMs: number;
 
   constructor(options: VictoriaMetricsProviderOptions) {
     this.#options = options;
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.alertsBaseUrl = normalizeBaseUrl(options.alertsBaseUrl);
+    this.providerClass = options.alertsProvider === "grafana-alertmanager"
+      ? GRAFANA_ALERTMANAGER_PROVIDER_CLASS
+      : PROMETHEUS_PROVIDER_CLASS;
+    this.alertsUrl = normalizeEndpointUrl(
+      options.alertsBaseUrl,
+      this.providerClass === GRAFANA_ALERTMANAGER_PROVIDER_CLASS ? GRAFANA_ALERTMANAGER_ALERTS_PATH : VMALERT_ALERTS_PATH,
+    );
     this.clock = options.clock ?? (() => new Date());
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (!Number.isInteger(this.timeoutMs) || this.timeoutMs < 1 || this.timeoutMs > 30_000) {
@@ -100,7 +111,7 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     return CapabilitiesResultSchema.parse({
       ...this.evidence(),
       data: {
-        providerClasses: [this.providerClass()],
+        providerClasses: [this.providerClass],
         enabledTools: [
           "observability.capabilities",
           "observability.health_snapshot",
@@ -163,12 +174,7 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     const request = ActiveAlertsInputSchema.parse(input);
     const observedAt = this.now();
     const grafanaAlertmanager = this.#options.alertsProvider === "grafana-alertmanager";
-    const payload = await this.requestJson(
-      this.alertsBaseUrl,
-      grafanaAlertmanager ? "api/v2/alerts" : "api/v1/alerts",
-      {},
-      this.#options.alertsToken,
-    );
+    const payload = await this.requestJson(this.alertsUrl, undefined, {}, this.#options.alertsToken);
     if (payload === undefined) {
       return ActiveAlertsResultSchema.parse({
         ...this.evidence(observedAt, "unknown", [unavailableWarning()]),
@@ -266,11 +272,14 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
 
   private async requestJson(
     baseUrl: URL,
-    path: string,
+    path?: string,
     parameters: Record<string, string> = {},
     token = this.#options.token,
   ): Promise<unknown | undefined> {
-    const url = new URL(path.replace(/^\/+/, ""), baseUrl);
+    const url = path === undefined
+      ? new URL(baseUrl.toString())
+      : new URL(path.replace(/^\/+/, ""), baseUrl);
+    if (url.origin !== baseUrl.origin) return undefined;
     for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, value);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -318,7 +327,7 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     return {
       schemaVersion: SCHEMA_VERSION,
       observedAt,
-      providerClass: this.providerClass(),
+      providerClass: this.providerClass,
       freshness,
       truncated: false,
       redactionsApplied: false,
@@ -326,11 +335,6 @@ export class VictoriaMetricsProvider implements ObservabilityProvider {
     };
   }
 
-  private providerClass(): "prometheus-compatible" | "grafana-alertmanager" {
-    return this.#options.alertsProvider === "grafana-alertmanager"
-      ? "grafana-alertmanager"
-      : "prometheus-compatible";
-  }
   private now(): string {
     return this.clock().toISOString();
   }
@@ -342,6 +346,15 @@ function normalizeBaseUrl(value: string): URL {
     throw new Error("baseUrl must be an absolute HTTP(S) URL without credentials, query, or fragment");
   }
   if (!url.pathname.endsWith("/")) url.pathname = `${url.pathname}/`;
+  return url;
+}
+
+function normalizeEndpointUrl(value: string, endpointPath: string): URL {
+  const url = normalizeBaseUrl(value);
+  const basePath = url.pathname.replace(/\/+$/, "");
+  url.pathname = basePath === "" || basePath === endpointPath || basePath.endsWith(endpointPath)
+    ? (basePath === "" ? endpointPath : basePath)
+    : `${basePath}${endpointPath}`;
   return url;
 }
 

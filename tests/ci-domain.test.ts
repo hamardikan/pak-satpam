@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CICategorySchema,
+  CIJobIdSchema,
+  CIRunIdSchema,
   CIWorkflowStatusResultSchema,
   classifyFailure,
 } from "../src/domain/ci-schemas.js";
@@ -42,8 +44,15 @@ describe("provider-neutral CI domain", () => {
         truncated: false,
         redactionsApplied: false,
         warnings: [],
-        data: { run: { id: "not-a-run" } },
+        data: { run: { id: "bad/run" } },
       }).success,
     ).toBe(false);
+  });
+
+  it("accepts bounded provider-native string and UUID identifiers", () => {
+    expect(CIRunIdSchema.safeParse("build-main-7").success).toBe(true);
+    expect(CIRunIdSchema.safeParse("{550e8400-e29b-41d4-a716-446655440000}").success).toBe(true);
+    expect(CIJobIdSchema.safeParse("job-uuid-7").success).toBe(true);
+    expect(CIRunIdSchema.safeParse("unsafe/run").success).toBe(false);
   });
 });

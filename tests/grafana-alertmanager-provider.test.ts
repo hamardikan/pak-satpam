@@ -4,7 +4,13 @@ import { VictoriaMetricsProvider } from "../src/providers/victoriametrics-provid
 const NOW = new Date("2026-07-10T00:00:00.000Z");
 
 describe("Grafana embedded Alertmanager adapter", () => {
-  it("uses the v2 read-only endpoint, per-base auth, and normalizes Grafana alert objects", async () => {
+  it.each([
+    "https://grafana.example",
+    "https://grafana.example/grafana",
+    "https://grafana.example/api/alertmanager/grafana/api/v2/alerts",
+    "https://grafana.example/grafana/api/alertmanager/grafana/api/v2/alerts",
+    "https://grafana.example/api/alertmanager/grafana/api/v2/alerts/",
+  ])("uses the v2 read-only endpoint for origin and full-endpoint configuration: %s", async (alertsBaseUrl) => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify([
       {
         fingerprint: "abc123",
@@ -16,7 +22,7 @@ describe("Grafana embedded Alertmanager adapter", () => {
     ]), { headers: { "content-type": "application/json" } }));
     const provider = new VictoriaMetricsProvider({
       baseUrl: "https://prometheus.example",
-      alertsBaseUrl: "https://grafana.example/api/alertmanager/grafana",
+      alertsBaseUrl,
       alertsProvider: "grafana-alertmanager",
       alertsToken: "grafana-test-token-123456",
       fetch,
@@ -36,12 +42,47 @@ describe("Grafana embedded Alertmanager adapter", () => {
       serviceId: "backend",
       startsAt: "2026-07-09T23:59:00.000Z",
     })]);
-    expect(String(fetch.mock.calls[0]?.[0])).toBe("https://grafana.example/api/alertmanager/grafana/api/v2/alerts");
+    const requestUrl = new URL(String(fetch.mock.calls[0]?.[0]));
+    expect(requestUrl.origin).toBe("https://grafana.example");
+    expect(requestUrl.pathname).toMatch(/\/api\/alertmanager\/grafana\/api\/v2\/alerts$/);
+    expect(requestUrl.pathname).not.toContain("api/alertmanager/grafana/api/v2/alerts/api/");
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET", redirect: "error" });
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({
       headers: { Authorization: "Bearer grafana-test-token-123456" },
     });
     await provider.queryMetrics({ queryTemplate: "up" });
     expect(fetch.mock.calls[1]?.[1]?.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it("reports the configured Grafana provider class in capabilities", async () => {
+    const provider = new VictoriaMetricsProvider({
+      baseUrl: "https://prometheus.example",
+      alertsBaseUrl: "https://grafana.example/api/alertmanager/grafana/api/v2/alerts",
+      alertsProvider: "grafana-alertmanager",
+      fetch: vi.fn<typeof globalThis.fetch>(),
+      queryTemplates: {},
+      serviceHealth: {},
+    });
+
+    await expect(provider.capabilities({})).resolves.toMatchObject({
+      providerClass: "grafana-alertmanager",
+      data: { providerClasses: ["grafana-alertmanager"] },
+    });
+  });
+
+  it.each([
+    "ftp://grafana.example",
+    "https://user:password@grafana.example",
+    "https://grafana.example/api/alertmanager/grafana/api/v2/alerts?next=https://evil.example",
+    "https://grafana.example/api/alertmanager/grafana/api/v2/alerts#https://evil.example",
+  ])("rejects unsafe alert URL configuration: %s", (alertsBaseUrl) => {
+    expect(() => new VictoriaMetricsProvider({
+      baseUrl: "https://prometheus.example",
+      alertsBaseUrl,
+      alertsProvider: "grafana-alertmanager",
+      fetch: vi.fn<typeof globalThis.fetch>(),
+      queryTemplates: {},
+      serviceHealth: {},
+    })).toThrow();
   });
 });

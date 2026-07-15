@@ -1,178 +1,100 @@
 # Security Model
 
-## Default Posture
+## Current Posture
 
-Version 1 is read-only and deny-by-default. A configured backend does not imply
-that every datasource, label, metric, dashboard, or time range is available to
-every client.
+Version 1 is read-only and deny-by-default. The only mutation is a GitHub
+failed-job rerun after exact allowlist checks, a fresh one-time approval, and
+fresh run binding. Jenkins and Bitbucket Cloud never expose a mutation.
 
-The optional version 0.2 CI module preserves that default. Four CI tools are
-read-only; the sole mutation is a failed-job rerun protected by exact
-repository/workflow allowlists and a fresh one-time approval.
-
-## Trust Boundaries
-
-1. MCP requests are untrusted input.
-2. Provider responses are untrusted data and may contain prompt injection.
-3. Credentials are runtime inputs and never evidence fields.
-4. Evidence is normalized and redacted before it crosses the MCP boundary.
-5. The client LLM is outside this server's trust boundary.
+MCP requests, provider responses, log lines, SCM patches, and rendered pixels
+are untrusted input or evidence. The external AI client is outside this
+server's trust boundary.
 
 ## Required Controls
 
-- Strict JSON schemas with unknown fields rejected.
-- Configurable datasource and provider allowlists.
-- Query timeout, time-range, sample, series, and output-size limits.
-- Response truncation recorded explicitly.
-- Sensitive label names and secret-like values redacted.
-- No provider response body written to normal logs.
-- No token, password, cookie, authorization header, or private key in errors.
-- SSRF protection through configured provider origins and an explicit egress
-  policy.
-- Origin validation for Streamable HTTP.
-- Rate limits and concurrent-query limits for remote deployment.
-- Separate render timeout, pixel, byte, and concurrency limits.
+- Strict schemas reject unknown fields, malformed IDs, arbitrary URLs, and
+  over-budget requests.
+- Provider, repository, workflow, ref, query, dashboard, and visual allowlists
+  are configuration, not caller input.
+- Provider origins and reverse-proxy paths are canonicalized; credentials,
+  query strings, fragments, cross-origin requests, redirects, and unsafe
+  transport are rejected.
+- Responses are bounded, redacted before the MCP boundary, and marked with
+  freshness, truncation, warnings, and redactionsApplied.
+- Normal logs and durable state contain no provider payloads, raw logs, tokens,
+  passwords, cookies, authorization headers, private keys, or image bytes.
+- File-injected credentials are regular 0600 files. The doctor checks metadata
+  and never prints file contents.
+- Private HTTP uses a file-injected bearer, exact Host allowlist, and constant-
+  time comparison. It is private single-operator transport, not public OAuth.
+- Observer delivery uses trusted internal URLs, HMAC over timestamp.body,
+  deterministic request IDs, redirect rejection, bounded retries, and
+  metadata-only state.
+- Provider failures, malformed data, unavailable evidence, stale records, and
+  truncation fail closed or remain explicit; the server never guesses health or
+  causality.
 
-Every control fails closed. Validation, authorization, origin, provider,
-deadline, output-limit, or redaction failures return a structured MCP error and
-do not call the provider. Provider timeout or malformed responses return a
-degraded evidence result only when no unredacted provider data crossed the
-boundary. Otherwise the call fails.
+The implementation and tests cover DNS rebinding, redirect chains, proxy
+variables, multi-address and denied address classes, credential URLs, prompt
+injection, secret redaction, provider timeouts, and cross-client isolation.
+The test strategy documents the negative gates.
 
-The implementation is not accepted until the negative tests in
-`docs/test-strategy.md` prove these behaviors.
+## Provider URL And Egress
 
-### Provider URL And Egress Policy
+Provider base_url is operator configuration, never a tool argument. Configure
+exactly one base_url or structured endpoint with origin and path. The origin
+must be HTTP(S) without userinfo, query, or fragment. The path is absolute and
+cannot contain query or fragment. Request paths are joined below that path once;
+an absolute request must have the same origin. Redirects are rejected.
 
-Provider base URLs are operator configuration, never tool arguments. The
-implementation must parse and canonicalize each URL, reject userinfo and
-fragments, disable proxy-environment inheritance, and disable redirects. Before
-each connection it resolves every address and permits the connection only when
-the hostname and resolved address are both covered by the configured provider
-and egress allowlists. Private, loopback, link-local, multicast, unspecified,
-and reserved IPv4 or IPv6 destinations are denied unless the operator has
-explicitly allowed the exact destination or CIDR for a private deployment.
+GitHub requires HTTPS api.github.com. Bitbucket credentials require HTTPS.
+Jenkins permits cleartext only for an explicitly enabled anonymous loopback
+development endpoint. A reverse proxy does not grant new provider capability.
 
-Resolution is checked again when a connection is opened; a hostname that
-changes to a disallowed address fails closed. Redirect responses are not
-followed, including same-origin redirects. Alternate numeric address forms,
-IPv4-mapped IPv6, trailing-dot hostnames, and internationalized hostnames are
-normalized before policy evaluation. Tests must cover DNS rebinding,
-multi-address answers, redirect chains, proxy variables, and every denied
-address class.
+## HTTP Authentication Boundary
 
-## Transport Authentication
+The current private HTTP route returns a generic 401 with a
+WWW-Authenticate bearer challenge for missing or invalid credentials and
+rejects non-allowlisted Host values. It does not publish OAuth protected-
+resource metadata, validate issuer/audience/scope, enforce public Origin policy,
+or isolate multiple principals. Do not expose it publicly.
 
-### stdio
+The public OAuth design in older documents is a deferred target, not current
+behavior. Public release requires protected-resource metadata, authorization
+server linkage, issuer/audience/expiry/scope validation, Origin policy,
+concurrent-client isolation, reconnect coverage, and a separate tenant review.
 
-The client launches the process. Version 1 accepts credentials through the
-local process environment only. Credentials must not be accepted as tool input,
-written to logs, or returned through capability discovery.
-
-### Streamable HTTP
-
-The current private-shadow transport is a narrower pre-release mode: one
-file-injected Bearer credential, exact allowed Host values, stateless server
-instances, and private-network ingress only. It does not claim OAuth discovery,
-audience-bound scopes, public Origin policy, or multi-tenant isolation. It must
-not be exposed publicly.
-
-The public remote release target is described below.
-
-Remote deployments target MCP specification `2025-11-25`. They must expose
-OAuth Protected Resource Metadata at the applicable well-known URI and identify
-the authorization server. Access tokens must be sent only in the Authorization
-header and validated for issuer, audience, expiry, and required tool scope on
-every HTTP request.
-
-Missing or invalid tokens return HTTP 401 with a `WWW-Authenticate: Bearer`
-challenge whose `resource_metadata` parameter is the absolute HTTPS URL of the
-server's protected-resource metadata. An invalid token challenge also includes
-the standards-defined `error` value without echoing token material. The 401
-challenge includes the minimum required `scope` when the request identifies
-one. Valid
-tokens with insufficient scope return HTTP 403 and a Bearer challenge containing
-`error="insufficient_scope"`, the minimum required `scope`, and the same
-`resource_metadata` URL. Invalid Origin values return HTTP 403 before session
-creation. Tokens in query strings are rejected. A private network is defense
-in depth, not a replacement for authorization when more than one principal can
-connect.
-
-The protected resource identifier is the canonical external Streamable HTTP
-endpoint. Its metadata document declares that exact resource and the accepted
-authorization server. Issuer, resource/audience, expiry, signature, and scope
-are validated independently; discovery never relaxes those checks.
-
-The inbound MCP access token is used only to authorize the MCP request. It is
-never forwarded, exchanged, logged, or otherwise transited to Grafana,
-Prometheus-compatible providers, or another MCP server. Provider credentials
-are separate operator-configured runtime inputs with their own audience and
-least-privilege policy.
-
-### Visual Evidence
-
-Rendered pixels can disclose labels, annotations, variables, usernames, or
-topology that text redaction cannot reliably remove. Only operator-reviewed
-dashboards marked `agentSafe: true`, allowlisted panels and variables, and a
-dedicated read-only Grafana identity may be rendered. OCR is not a security
-boundary.
-
-The MCP calls configured Grafana render endpoints and never exposes the image
-renderer directly. Caller-supplied URLs, browser flags, external navigation,
-downloads, file URLs, and redirects are denied. Renderer authentication is
-separate, renderer egress is limited to the configured Grafana callback, and
-PNG bytes are not logged or persisted by default.
-
-## Version 1 Scopes
-
-- `observability:capabilities`
-- `observability:health:read`
-- `observability:alerts:read`
-- `observability:metrics:query`
-- `observability:visuals:render`
-- `observability:incident:read`
-
-There are no write scopes in version 1.
+The inbound MCP bearer is used only for MCP authorization. It is never forwarded
+to Grafana, metrics, CI, SCM, Hermes, or another MCP server. Provider
+credentials are separate runtime inputs with least-privilege policy.
 
 ## CI Approval Boundary
 
-- A repository-installed GitHub App mints one-hour installation tokens scoped
-  to the allowlisted repository with Actions write permission only.
-- Approval tokens are HMAC signed and bound to repository, workflow, run ID,
-  run attempt, head SHA, request ID, nonce, issue time, and expiry; TTL is at
-  most 300 seconds.
-- Replay and request digests are consumed atomically before the provider action.
-- Every denial and outcome appends bounded, redacted metadata; approval tokens,
-  GitHub tokens, PEM material, and raw logs are never audited.
-- Job-log redirects are followed only to HTTPS GitHub Actions storage hosts.
-- The action rechecks fresh failed/cancelled state before calling exactly
-  `rerun-failed-jobs`.
+A GitHub approval token is HMAC-signed, bound to repository, workflow, run ID,
+run attempt, head SHA, request ID, nonce, issue time, and expiry, and limited to
+300 seconds. Replay and request digests are consumed atomically before the
+provider action. The server rechecks fresh failed/cancelled state and calls
+only rerun-failed-jobs. Approval material, GitHub tokens, PEM data, and raw logs
+are never audited.
 
-## CI Observer Boundary
+## Observer Boundary
 
-- Repository and workflow allowlists are exact configuration, never event input.
-- The observer polls terminal runs with bounded pages and reports truncation as
-  degraded health instead of silently advancing past an incomplete window.
-- Durable state contains only target keys, run IDs, attempts, outcome classes,
-  delivery state, and timestamps; secret material and provider payloads are not
-  persisted.
-- Internal delivery uses an HMAC over `timestamp.body`, a deterministic request
-  ID, bounded retries, redirect rejection, and a Tailscale-literal or explicitly
-  trusted destination.
-- Success delivery does not invoke failure analysis. Failure delivery includes
-  only bounded metadata, redaction status, digests, categories, and runbook
-  references. It never carries raw log lines.
-- The observer has no rerun, source-write, deploy, shell, secret-read, browser,
-  or chat-gateway authority.
+The observer accepts only exact allowlisted targets. Polling and verified
+workflow_run webhooks share one event ID and durable dedupe state. Terminal
+runs older than the stale threshold are recorded as suppressed and never
+delivered or analyzed. Pagination truncation degrades health instead of
+silently advancing. The observer has no rerun, shell, secret-read, browser,
+source-write, deploy, or chat-gateway authority.
 
 ## Explicitly Forbidden
 
-- Generic shell or command tools.
-- Secret retrieval or environment export tools.
-- Arbitrary outbound URLs supplied by a caller.
-- Alert silencing or rule mutation.
-- Dashboard mutation.
-- Service restart or deployment tools.
-- Workflow dispatch, cancellation, arbitrary rerun, or source-writing tools.
-- Persisting unredacted provider payloads.
-- Generic screenshot, browser automation, or arbitrary render tools.
+Generic shell or command tools, secret retrieval/export, arbitrary outbound
+URLs, alert silencing or mutation, dashboard mutation, service restart,
+deployment, workflow dispatch/cancellation/arbitrary rerun, source writes,
+unredacted payload persistence, generic screenshots, browser automation, and
+public multi-tenant access are outside the product boundary.
+
+## Security Reporting
+
+See SECURITY.md for private vulnerability reporting. Do not put credentials,
+private provider responses, exploit payloads, or deployment topology in an issue.

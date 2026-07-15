@@ -12,14 +12,26 @@ provider permissions, or the read-only boundary. These are public contracts.
 - Do not add credentials, provider payloads, private hostnames, or production
   data to fixtures.
 - Use synthetic fixtures for security and integration tests.
-- Keep write tools outside version 1.
-- Update the compatibility matrix when transport behavior changes.
+- Keep write tools outside version 1 except the approval-gated failed-job rerun.
+- Update the provider matrix and client compatibility docs when behavior changes.
+- Keep documentation product-first; put test mechanics in
+  docs/test-strategy.md.
+- Do not publish, deploy, or modify private infrastructure from validation work.
 
-Run the current foundation check with:
+## Verification
 
-```bash
+~~~bash
+npm run validate
 ./ci/validate-foundation.sh
-```
+~~~
 
-Implementation commands will be added with M1. Do not document commands that do
-not exist yet.
+For container changes, also run the non-publishing container build and smoke
+gates documented in docs/portability.md. Do not claim public release or live
+deployment from local green tests alone.
+
+## Documentation Changes
+
+Keep examples placeholder-only. Credential files must be referenced by path and
+must be regular 0600 files; never include secret values, private topology, or
+provider payloads. Preserve useful historical objective and decision documents,
+but label deferred targets and release blockers clearly.
