@@ -657,7 +657,9 @@ export class ObserverRuntime {
           signal: deadlineController.signal,
           limits: { ...this.#recommendationLimits, timeoutMs: Math.max(1, Math.min(timeoutMs, remainingMs)) },
         });
-        const boundedRecommendation = recommendation.reason === "aborted" && Date.now() >= deadline
+        // This controller is private to the shared analysis deadline, so an
+        // aborted callback here is always the deterministic timeout fallback.
+        const boundedRecommendation = recommendation.reason === "aborted"
           ? { ...recommendation, reason: "timeout" as const }
           : recommendation;
         return { ...payload, recommendation: boundedRecommendation } as AgentNotificationPayload;

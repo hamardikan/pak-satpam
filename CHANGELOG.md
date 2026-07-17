@@ -3,6 +3,11 @@
 All notable changes to Pak Satpam are documented here. A changelog entry is not
 a publication receipt.
 
+## [0.2.5] - 2026-07-17
+
+- Classify shared analysis-deadline cancellation deterministically as timeout,
+  independent of timer scheduling order.
+
 ## [0.2.4] - 2026-07-17
 
 - Add the Goal 23 provider-neutral event envelope with deterministic replay,

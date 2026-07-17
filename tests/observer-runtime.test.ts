@@ -1121,7 +1121,7 @@ describe("observer state and Hermes delivery", () => {
       state: new InMemoryObserverStateStore(),
       deliver,
       recommendationAnalysis: callback,
-      recommendationLimits: { timeoutMs: 10 },
+      recommendationLimits: { timeoutMs: 250 },
       clock: () => NOW,
     });
 
